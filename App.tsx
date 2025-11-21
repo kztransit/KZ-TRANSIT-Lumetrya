@@ -5,7 +5,6 @@ import { GoogleGenAI, LiveSession, LiveServerMessage, Modality, Blob } from "@go
 import { decode, decodeAudioData, encode } from './utils';
 import { navigationFunctionDeclaration, createCommercialProposalFunctionDeclaration } from './services/geminiService';
 
-
 import Sidebar from './components/Sidebar';
 import DashboardPage from './pages/DashboardPage';
 import ReportsPage from './pages/ReportsPage';
@@ -24,7 +23,20 @@ import OtherReportsPage from './pages/OtherReportsPage';
 import VoiceAssistantOverlay from './components/VoiceAssistantOverlay';
 import { initialUserData, mockUser } from './services/mockData';
 import { User, UserData, Report, CommercialProposal, AdCampaign, Link, StoredFile, CompanyProfile, Payment, OtherReport } from './types';
-import { loadUserDataFromDB, saveUserDataToDB } from './services/indexedDB';
+
+// ИМПОРТИРУЕМ НОВЫЙ API
+import { 
+  fetchFullUserData, 
+  apiAddReport, apiUpdateReport, apiDeleteReport,
+  apiAddProposal, apiUpdateProposal, apiDeleteProposal,
+  apiAddCampaign, apiDeleteCampaign,
+  apiAddOtherReport, apiUpdateOtherReport, apiDeleteOtherReport,
+  apiAddPayment, apiUpdatePayment, apiDeletePayment,
+  apiAddLink, apiDeleteLink,
+  apiAddFile, apiDeleteFile,
+  apiUpdateCompanyProfile
+} from './services/api';
+
 import Logo from './components/Logo';
 
 
@@ -51,31 +63,22 @@ const App: React.FC = () => {
     const userTranscriptRef = useRef('');
     const aiTranscriptRef = useRef('');
     
-    // Effect to load data from IndexedDB on initial mount
+    // --- ЗАГРУЗКА ИЗ SUPABASE ---
     useEffect(() => {
         const loadData = async () => {
             setIsLoadingData(true);
             try {
-                const data = await loadUserDataFromDB();
+                const data = await fetchFullUserData();
                 setUserData(data);
+                console.log("Данные успешно загружены из Supabase!");
             } catch (error) {
-                console.error("Failed to load data from IndexedDB, using initial data:", error);
+                console.error("Ошибка загрузки данных:", error);
             } finally {
                 setIsLoadingData(false);
             }
         };
         loadData();
     }, []);
-    
-
-    // Effect to save user data to IndexedDB whenever it changes
-    useEffect(() => {
-        if (isLoadingData) return;
-        saveUserDataToDB(userData).catch(error => {
-            console.error("Could not save user data to IndexedDB.", error);
-            alert("Ошибка! Не удалось сохранить данные. Ваши последние изменения могут быть потеряны после перезагрузки страницы.");
-        });
-    }, [userData, isLoadingData]);
 
     // Effect for Dark Mode
     useEffect(() => {
@@ -119,28 +122,35 @@ const App: React.FC = () => {
         localStorage.removeItem('rememberedUser');
     }, []);
     
+    // --- ОБНОВЛЕННЫЕ ФУНКЦИИ CRUD (С СОХРАНЕНИЕМ В SUPABASE) ---
     const crudFunctions = useMemo(() => ({
         // REPORTS
         setReports: (updater: Report[] | ((prevReports: Report[]) => Report[])) => {
+             // SetReports используется редко, для массового обновления оставим локально пока
             setUserData(prev => ({
                 ...prev,
                 reports: typeof updater === 'function' ? updater(prev.reports) : updater,
             }));
         },
-        addReport: (report: Omit<Report, 'id'>) => {
+        addReport: async (report: Omit<Report, 'id'>) => {
             const newReport = { ...report, id: uuidv4() };
+            // 1. Сохраняем в Supabase
+            await apiAddReport(newReport);
+            // 2. Обновляем интерфейс
             setUserData(prev => ({
                 ...prev,
                 reports: [newReport, ...prev.reports],
             }));
         },
-        updateReport: (updatedReport: Report) => {
+        updateReport: async (updatedReport: Report) => {
+            await apiUpdateReport(updatedReport);
             setUserData(prev => ({
                 ...prev,
                 reports: prev.reports.map(r => r.id === updatedReport.id ? updatedReport : r),
             }));
         },
-        deleteReport: (id: string) => {
+        deleteReport: async (id: string) => {
+            await apiDeleteReport(id);
             setUserData(prev => ({
                 ...prev,
                 reports: prev.reports.filter(r => r.id !== id),
@@ -148,20 +158,23 @@ const App: React.FC = () => {
         },
 
         // OTHER REPORTS
-        addOtherReport: (report: Omit<OtherReport, 'id'>) => {
+        addOtherReport: async (report: Omit<OtherReport, 'id'>) => {
             const newReport = { ...report, id: uuidv4() };
+            await apiAddOtherReport(newReport);
             setUserData(prev => ({
                 ...prev,
                 otherReports: [newReport, ...prev.otherReports].sort((a,b) => new Date(b.date).getTime() - new Date(a.date).getTime()),
             }));
         },
-        updateOtherReport: (updatedReport: OtherReport) => {
+        updateOtherReport: async (updatedReport: OtherReport) => {
+            await apiUpdateOtherReport(updatedReport);
             setUserData(prev => ({
                 ...prev,
                 otherReports: prev.otherReports.map(r => r.id === updatedReport.id ? updatedReport : r).sort((a,b) => new Date(b.date).getTime() - new Date(a.date).getTime()),
             }));
         },
-        deleteOtherReport: (id: string) => {
+        deleteOtherReport: async (id: string) => {
+            await apiDeleteOtherReport(id);
             setUserData(prev => ({
                 ...prev,
                 otherReports: prev.otherReports.filter(r => r.id !== id),
@@ -175,27 +188,34 @@ const App: React.FC = () => {
                 proposals: typeof updater === 'function' ? updater(prev.proposals) : updater,
             }));
         },
-        addProposal: (proposal: Omit<CommercialProposal, 'id'>) => {
+        addProposal: async (proposal: Omit<CommercialProposal, 'id'>) => {
             const newProposal = { ...proposal, id: uuidv4() };
+            await apiAddProposal(newProposal);
             setUserData(prev => ({
                 ...prev,
                 proposals: [newProposal, ...prev.proposals],
             }));
         },
-        updateProposal: (updatedProposal: CommercialProposal) => {
+        updateProposal: async (updatedProposal: CommercialProposal) => {
+            await apiUpdateProposal(updatedProposal);
             setUserData(prev => ({
                 ...prev,
                 proposals: prev.proposals.map(p => p.id === updatedProposal.id ? updatedProposal : p),
             }));
         },
-        addMultipleProposals: (proposals: Omit<CommercialProposal, 'id'>[]) => {
+        addMultipleProposals: async (proposals: Omit<CommercialProposal, 'id'>[]) => {
+            // Для множественного добавления
             const newProposals = proposals.map(p => ({ ...p, id: uuidv4() }));
+            // Сохраняем каждый (можно оптимизировать, но для начала так)
+            for (const p of newProposals) await apiAddProposal(p);
+            
             setUserData(prev => ({
                 ...prev,
                 proposals: [...newProposals, ...prev.proposals],
             }));
         },
-        deleteProposal: (id: string) => {
+        deleteProposal: async (id: string) => {
+            await apiDeleteProposal(id);
             setUserData(prev => ({
                 ...prev,
                 proposals: prev.proposals.filter(p => p.id !== id),
@@ -209,21 +229,25 @@ const App: React.FC = () => {
                 campaigns: typeof updater === 'function' ? updater(prev.campaigns) : updater,
             }));
         },
-        addCampaign: (campaign: Omit<AdCampaign, 'id'>) => {
+        addCampaign: async (campaign: Omit<AdCampaign, 'id'>) => {
              const newCampaign = { ...campaign, id: uuidv4() };
+             await apiAddCampaign(newCampaign);
              setUserData(prev => ({
                 ...prev,
                 campaigns: [newCampaign, ...prev.campaigns],
              }));
         },
-        addMultipleCampaigns: (campaigns: Omit<AdCampaign, 'id'>[]) => {
+        addMultipleCampaigns: async (campaigns: Omit<AdCampaign, 'id'>[]) => {
             const newCampaigns = campaigns.map(c => ({ ...c, id: uuidv4() }));
+            for (const c of newCampaigns) await apiAddCampaign(c);
+
             setUserData(prev => ({
                 ...prev,
                 campaigns: [...newCampaigns, ...prev.campaigns],
             }));
         },
-        deleteCampaign: (id: string) => {
+        deleteCampaign: async (id: string) => {
+            await apiDeleteCampaign(id);
             setUserData(prev => ({
                 ...prev,
                 campaigns: prev.campaigns.filter(c => c.id !== id),
@@ -231,14 +255,16 @@ const App: React.FC = () => {
         },
 
         // LINKS
-        addLink: (link: Omit<Link, 'id'>) => {
+        addLink: async (link: Omit<Link, 'id'>) => {
             const newLink = { ...link, id: uuidv4() };
+            await apiAddLink(newLink);
             setUserData(prev => ({
                 ...prev,
                 links: [newLink, ...prev.links],
             }));
         },
-        deleteLink: (id: string) => {
+        deleteLink: async (id: string) => {
+            await apiDeleteLink(id);
             setUserData(prev => ({
                 ...prev,
                 links: prev.links.filter(l => l.id !== id),
@@ -246,15 +272,17 @@ const App: React.FC = () => {
         },
         
         // FILES
-        addFile: (fileData: Omit<StoredFile, 'id'>) => {
+        addFile: async (fileData: Omit<StoredFile, 'id'>) => {
             const newFile = { ...fileData, id: uuidv4() };
+            await apiAddFile(newFile);
             setUserData(prev => ({
                 ...prev,
                 files: [newFile, ...prev.files],
             }));
             return newFile;
         },
-        deleteFile: (id: string) => {
+        deleteFile: async (id: string) => {
+            await apiDeleteFile(id);
             setUserData(prev => ({
                 ...prev,
                 files: prev.files.filter(f => f.id !== id),
@@ -262,20 +290,23 @@ const App: React.FC = () => {
         },
 
         // PAYMENTS
-        addPayment: (payment: Omit<Payment, 'id'>) => {
+        addPayment: async (payment: Omit<Payment, 'id'>) => {
             const newPayment = { ...payment, id: uuidv4() };
+            await apiAddPayment(newPayment);
             setUserData(prev => ({
                 ...prev,
                 payments: [newPayment, ...prev.payments].sort((a, b) => new Date(a.nextPaymentDate).getTime() - new Date(b.nextPaymentDate).getTime()),
             }));
         },
-        updatePayment: (updatedPayment: Payment) => {
+        updatePayment: async (updatedPayment: Payment) => {
+            await apiUpdatePayment(updatedPayment);
             setUserData(prev => ({
                 ...prev,
                 payments: prev.payments.map(p => p.id === updatedPayment.id ? updatedPayment : p).sort((a, b) => new Date(a.nextPaymentDate).getTime() - new Date(b.nextPaymentDate).getTime()),
             }));
         },
-        deletePayment: (id: string) => {
+        deletePayment: async (id: string) => {
+            await apiDeletePayment(id);
             setUserData(prev => ({
                 ...prev,
                 payments: prev.payments.filter(p => p.id !== id),
@@ -283,7 +314,8 @@ const App: React.FC = () => {
         },
         
         // COMPANY PROFILE
-        setCompanyProfile: (profile: CompanyProfile) => {
+        setCompanyProfile: async (profile: CompanyProfile) => {
+            await apiUpdateCompanyProfile(profile);
             setUserData(prev => ({
                 ...prev,
                 companyProfile: profile,
@@ -347,7 +379,6 @@ const App: React.FC = () => {
         userTranscriptRef.current = '';
         aiTranscriptRef.current = '';
 
-        // --- ИСПРАВЛЕНИЕ: Получаем ключ через import.meta.env ---
         const apiKey = import.meta.env.VITE_GOOGLE_API_KEY;
 
         if (!apiKey) {
@@ -358,11 +389,9 @@ const App: React.FC = () => {
         }
         
         try {
-            // --- ИСПРАВЛЕНИЕ: Используем переменную apiKey ---
             const ai = new GoogleGenAI({ apiKey: apiKey });
             
             const sessionPromise = ai.live.connect({
-                // Если будет ошибка 404/Модель не найдена, попробуйте заменить название ниже на: 'gemini-2.0-flash-exp'
                 model: 'gemini-2.5-flash-native-audio-preview-09-2025', 
                 config: {
                     responseModalities: [Modality.AUDIO],
@@ -510,7 +539,7 @@ const App: React.FC = () => {
                             <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
                             <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
                         </svg>
-                        <span>Загрузка данных...</span>
+                        <span>Загрузка данных из облака...</span>
                     </div>
                 </div>
             </div>
