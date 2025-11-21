@@ -24,7 +24,7 @@ import VoiceAssistantOverlay from './components/VoiceAssistantOverlay';
 import { initialUserData, mockUser } from './services/mockData';
 import { User, UserData, Report, CommercialProposal, AdCampaign, Link, StoredFile, CompanyProfile, Payment, OtherReport } from './types';
 
-// ИМПОРТ НОВОГО API SUPABASE
+// ИМПОРТ API SUPABASE
 import { 
   fetchFullUserData, 
   apiAddReport, apiUpdateReport, apiDeleteReport,
@@ -38,7 +38,6 @@ import {
 } from './services/api';
 
 import Logo from './components/Logo';
-
 
 const App: React.FC = () => {
     const [userData, setUserData] = useState<UserData>(initialUserData);
@@ -63,7 +62,7 @@ const App: React.FC = () => {
     const userTranscriptRef = useRef('');
     const aiTranscriptRef = useRef('');
     
-    // --- ЗАГРУЗКА ИЗ SUPABASE (При старте) ---
+    // --- ЗАГРУЗКА ИЗ SUPABASE ---
     useEffect(() => {
         const loadData = async () => {
             setIsLoadingData(true);
@@ -82,7 +81,6 @@ const App: React.FC = () => {
 
     // --- ПРИНУДИТЕЛЬНАЯ СВЕТЛАЯ ТЕМА ---
     useEffect(() => {
-        // Всегда удаляем класс dark, чтобы тема была светлой
         document.documentElement.classList.remove('dark');
     }, [userData.companyProfile.darkModeEnabled]);
 
@@ -124,198 +122,125 @@ const App: React.FC = () => {
         localStorage.removeItem('rememberedUser');
     }, []);
     
-    // --- CRUD ФУНКЦИИ С ИНТЕГРАЦИЕЙ SUPABASE ---
+    // --- CRUD ФУНКЦИИ ---
     const crudFunctions = useMemo(() => ({
         // REPORTS
         setReports: (updater: Report[] | ((prevReports: Report[]) => Report[])) => {
-            setUserData(prev => ({
-                ...prev,
-                reports: typeof updater === 'function' ? updater(prev.reports) : updater,
-            }));
+            setUserData(prev => ({ ...prev, reports: typeof updater === 'function' ? updater(prev.reports) : updater }));
         },
         addReport: async (report: Omit<Report, 'id'>) => {
             const newReport = { ...report, id: uuidv4() };
-            await apiAddReport(newReport); // Сохранение в БД
-            setUserData(prev => ({
-                ...prev,
-                reports: [newReport, ...prev.reports],
-            }));
+            await apiAddReport(newReport);
+            setUserData(prev => ({ ...prev, reports: [newReport, ...prev.reports] }));
         },
         updateReport: async (updatedReport: Report) => {
-            await apiUpdateReport(updatedReport); // Обновление в БД
-            setUserData(prev => ({
-                ...prev,
-                reports: prev.reports.map(r => r.id === updatedReport.id ? updatedReport : r),
-            }));
+            await apiUpdateReport(updatedReport);
+            setUserData(prev => ({ ...prev, reports: prev.reports.map(r => r.id === updatedReport.id ? updatedReport : r) }));
         },
         deleteReport: async (id: string) => {
-            await apiDeleteReport(id); // Удаление из БД
-            setUserData(prev => ({
-                ...prev,
-                reports: prev.reports.filter(r => r.id !== id),
-            }));
+            await apiDeleteReport(id);
+            setUserData(prev => ({ ...prev, reports: prev.reports.filter(r => r.id !== id) }));
         },
 
         // OTHER REPORTS
         addOtherReport: async (report: Omit<OtherReport, 'id'>) => {
             const newReport = { ...report, id: uuidv4() };
             await apiAddOtherReport(newReport);
-            setUserData(prev => ({
-                ...prev,
-                otherReports: [newReport, ...prev.otherReports].sort((a,b) => new Date(b.date).getTime() - new Date(a.date).getTime()),
-            }));
+            setUserData(prev => ({ ...prev, otherReports: [newReport, ...prev.otherReports].sort((a,b) => new Date(b.date).getTime() - new Date(a.date).getTime()) }));
         },
         updateOtherReport: async (updatedReport: OtherReport) => {
             await apiUpdateOtherReport(updatedReport);
-            setUserData(prev => ({
-                ...prev,
-                otherReports: prev.otherReports.map(r => r.id === updatedReport.id ? updatedReport : r).sort((a,b) => new Date(b.date).getTime() - new Date(a.date).getTime()),
-            }));
+            setUserData(prev => ({ ...prev, otherReports: prev.otherReports.map(r => r.id === updatedReport.id ? updatedReport : r).sort((a,b) => new Date(b.date).getTime() - new Date(a.date).getTime()) }));
         },
         deleteOtherReport: async (id: string) => {
             await apiDeleteOtherReport(id);
-            setUserData(prev => ({
-                ...prev,
-                otherReports: prev.otherReports.filter(r => r.id !== id),
-            }));
+            setUserData(prev => ({ ...prev, otherReports: prev.otherReports.filter(r => r.id !== id) }));
         },
 
         // PROPOSALS
         setProposals: (updater: CommercialProposal[] | ((prevProposals: CommercialProposal[]) => CommercialProposal[])) => {
-            setUserData(prev => ({
-                ...prev,
-                proposals: typeof updater === 'function' ? updater(prev.proposals) : updater,
-            }));
+            setUserData(prev => ({ ...prev, proposals: typeof updater === 'function' ? updater(prev.proposals) : updater }));
         },
         addProposal: async (proposal: Omit<CommercialProposal, 'id'>) => {
             const newProposal = { ...proposal, id: uuidv4() };
             await apiAddProposal(newProposal);
-            setUserData(prev => ({
-                ...prev,
-                proposals: [newProposal, ...prev.proposals],
-            }));
+            setUserData(prev => ({ ...prev, proposals: [newProposal, ...prev.proposals] }));
         },
         updateProposal: async (updatedProposal: CommercialProposal) => {
             await apiUpdateProposal(updatedProposal);
-            setUserData(prev => ({
-                ...prev,
-                proposals: prev.proposals.map(p => p.id === updatedProposal.id ? updatedProposal : p),
-            }));
+            setUserData(prev => ({ ...prev, proposals: prev.proposals.map(p => p.id === updatedProposal.id ? updatedProposal : p) }));
         },
         addMultipleProposals: async (proposals: Omit<CommercialProposal, 'id'>[]) => {
             const newProposals = proposals.map(p => ({ ...p, id: uuidv4() }));
             for (const p of newProposals) await apiAddProposal(p);
-            
-            setUserData(prev => ({
-                ...prev,
-                proposals: [...newProposals, ...prev.proposals],
-            }));
+            setUserData(prev => ({ ...prev, proposals: [...newProposals, ...prev.proposals] }));
         },
         deleteProposal: async (id: string) => {
             await apiDeleteProposal(id);
-            setUserData(prev => ({
-                ...prev,
-                proposals: prev.proposals.filter(p => p.id !== id),
-            }));
+            setUserData(prev => ({ ...prev, proposals: prev.proposals.filter(p => p.id !== id) }));
         },
 
         // CAMPAIGNS
         setCampaigns: (updater: AdCampaign[] | ((prevCampaigns: AdCampaign[]) => AdCampaign[])) => {
-            setUserData(prev => ({
-                ...prev,
-                campaigns: typeof updater === 'function' ? updater(prev.campaigns) : updater,
-            }));
+            setUserData(prev => ({ ...prev, campaigns: typeof updater === 'function' ? updater(prev.campaigns) : updater }));
         },
         addCampaign: async (campaign: Omit<AdCampaign, 'id'>) => {
              const newCampaign = { ...campaign, id: uuidv4() };
              await apiAddCampaign(newCampaign);
-             setUserData(prev => ({
-                ...prev,
-                campaigns: [newCampaign, ...prev.campaigns],
-             }));
+             setUserData(prev => ({ ...prev, campaigns: [newCampaign, ...prev.campaigns] }));
         },
         addMultipleCampaigns: async (campaigns: Omit<AdCampaign, 'id'>[]) => {
             const newCampaigns = campaigns.map(c => ({ ...c, id: uuidv4() }));
             for (const c of newCampaigns) await apiAddCampaign(c);
-            setUserData(prev => ({
-                ...prev,
-                campaigns: [...newCampaigns, ...prev.campaigns],
-            }));
+            setUserData(prev => ({ ...prev, campaigns: [...newCampaigns, ...prev.campaigns] }));
         },
         deleteCampaign: async (id: string) => {
             await apiDeleteCampaign(id);
-            setUserData(prev => ({
-                ...prev,
-                campaigns: prev.campaigns.filter(c => c.id !== id),
-            }));
+            setUserData(prev => ({ ...prev, campaigns: prev.campaigns.filter(c => c.id !== id) }));
         },
 
         // LINKS
         addLink: async (link: Omit<Link, 'id'>) => {
             const newLink = { ...link, id: uuidv4() };
             await apiAddLink(newLink);
-            setUserData(prev => ({
-                ...prev,
-                links: [newLink, ...prev.links],
-            }));
+            setUserData(prev => ({ ...prev, links: [newLink, ...prev.links] }));
         },
         deleteLink: async (id: string) => {
             await apiDeleteLink(id);
-            setUserData(prev => ({
-                ...prev,
-                links: prev.links.filter(l => l.id !== id),
-            }));
+            setUserData(prev => ({ ...prev, links: prev.links.filter(l => l.id !== id) }));
         },
         
         // FILES
         addFile: async (fileData: Omit<StoredFile, 'id'>) => {
             const newFile = { ...fileData, id: uuidv4() };
             await apiAddFile(newFile);
-            setUserData(prev => ({
-                ...prev,
-                files: [newFile, ...prev.files],
-            }));
+            setUserData(prev => ({ ...prev, files: [newFile, ...prev.files] }));
             return newFile;
         },
         deleteFile: async (id: string) => {
             await apiDeleteFile(id);
-            setUserData(prev => ({
-                ...prev,
-                files: prev.files.filter(f => f.id !== id),
-            }));
+            setUserData(prev => ({ ...prev, files: prev.files.filter(f => f.id !== id) }));
         },
 
         // PAYMENTS
         addPayment: async (payment: Omit<Payment, 'id'>) => {
             const newPayment = { ...payment, id: uuidv4() };
             await apiAddPayment(newPayment);
-            setUserData(prev => ({
-                ...prev,
-                payments: [newPayment, ...prev.payments].sort((a, b) => new Date(a.nextPaymentDate).getTime() - new Date(b.nextPaymentDate).getTime()),
-            }));
+            setUserData(prev => ({ ...prev, payments: [newPayment, ...prev.payments].sort((a, b) => new Date(a.nextPaymentDate).getTime() - new Date(b.nextPaymentDate).getTime()) }));
         },
         updatePayment: async (updatedPayment: Payment) => {
             await apiUpdatePayment(updatedPayment);
-            setUserData(prev => ({
-                ...prev,
-                payments: prev.payments.map(p => p.id === updatedPayment.id ? updatedPayment : p).sort((a, b) => new Date(a.nextPaymentDate).getTime() - new Date(b.nextPaymentDate).getTime()),
-            }));
+            setUserData(prev => ({ ...prev, payments: prev.payments.map(p => p.id === updatedPayment.id ? updatedPayment : p).sort((a, b) => new Date(a.nextPaymentDate).getTime() - new Date(b.nextPaymentDate).getTime()) }));
         },
         deletePayment: async (id: string) => {
             await apiDeletePayment(id);
-            setUserData(prev => ({
-                ...prev,
-                payments: prev.payments.filter(p => p.id !== id),
-            }));
+            setUserData(prev => ({ ...prev, payments: prev.payments.filter(p => p.id !== id) }));
         },
         
         // COMPANY PROFILE
         setCompanyProfile: async (profile: CompanyProfile) => {
             await apiUpdateCompanyProfile(profile);
-            setUserData(prev => ({
-                ...prev,
-                companyProfile: profile,
-            }));
+            setUserData(prev => ({ ...prev, companyProfile: profile }));
         },
 
         // ALL USER DATA
@@ -362,6 +287,37 @@ const App: React.FC = () => {
         navigate(page);
     };
 
+    // --- ФУНКЦИЯ ДЛЯ СБОРКИ КОНТЕКСТА (ЧТОБЫ AI ВИДЕЛ ДАННЫЕ) ---
+    const generateContext = (data: UserData) => {
+        return `
+        СИСТЕМНАЯ ИНСТРУКЦИЯ: ${data.companyProfile.aiSystemInstruction}
+
+        ВНИМАНИЕ! НИЖЕ ПРЕДСТАВЛЕНЫ АКТУАЛЬНЫЕ ДАННЫЕ КОМПАНИИ В ФОРМАТЕ JSON.
+        ИСПОЛЬЗУЙ ЭТИ ДАННЫЕ ДЛЯ ОТВЕТОВ НА ВОПРОСЫ ПОЛЬЗОВАТЕЛЯ.
+        
+        1. ПРОФИЛЬ КОМПАНИИ:
+        Название: ${data.companyProfile.companyName}
+        Детали: ${JSON.stringify(data.companyProfile.details)}
+
+        2. ФИНАНСОВЫЕ ОТЧЕТЫ (Reports):
+        ${JSON.stringify(data.reports)}
+
+        3. КОММЕРЧЕСКИЕ ПРЕДЛОЖЕНИЯ (Proposals):
+        ${JSON.stringify(data.proposals)}
+
+        4. РЕКЛАМНЫЕ КАМПАНИИ (Campaigns):
+        ${JSON.stringify(data.campaigns)}
+
+        5. ПЛАТЕЖИ (Payments):
+        ${JSON.stringify(data.payments)}
+
+        6. ДРУГИЕ ОТЧЕТЫ:
+        ${JSON.stringify(data.otherReports)}
+
+        Если пользователь спрашивает о цифрах, ищи их в этих данных.
+        `;
+    };
+
     const handleToggleVoiceControl = async () => {
         if (isVoiceControlActive) {
             sessionRef.current?.close();
@@ -375,27 +331,28 @@ const App: React.FC = () => {
         userTranscriptRef.current = '';
         aiTranscriptRef.current = '';
 
-        // --- ИСПРАВЛЕНИЕ КЛЮЧА ---
         const apiKey = import.meta.env.VITE_GOOGLE_API_KEY;
 
         if (!apiKey) {
             console.error("Gemini API key not found.");
-            alert("Ошибка: API ключ не найден. Убедитесь, что он добавлен в Vercel (VITE_GOOGLE_API_KEY).");
+            alert("Ошибка: API ключ не найден.");
             cleanupVoiceSession();
             return;
         }
         
         try {
-            // --- ИСПРАВЛЕНИЕ: Передаем apiKey ---
             const ai = new GoogleGenAI({ apiKey: apiKey });
             
+            // Генерируем полный контекст с данными перед подключением
+            const fullSystemInstruction = generateContext(userData);
+
             const sessionPromise = ai.live.connect({
-                // --- ИСПРАВЛЕНИЕ: Используем стабильную модель ---
-                model: 'gemini-2.0-flash-exp',
+                model: 'gemini-2.0-flash-exp', // Стабильная модель
                 config: {
                     responseModalities: [Modality.AUDIO],
                     speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName: 'Zephyr' } } },
-                    systemInstruction: userData.companyProfile.aiSystemInstruction,
+                    // Вставляем полную инструкцию с данными
+                    systemInstruction: fullSystemInstruction,
                     inputAudioTranscription: {},
                     outputAudioTranscription: {},
                     tools: [{functionDeclarations: [navigationFunctionDeclaration, createCommercialProposalFunctionDeclaration]}],
@@ -442,21 +399,17 @@ const App: React.FC = () => {
 
                         if (message.toolCall) {
                             for (const fc of message.toolCall.functionCalls) {
-                                let functionResult = "Действие выполнено."; // Default result
-                        
+                                let functionResult = "Действие выполнено.";
                                 if (fc.name === 'navigateToPage' && fc.args.page) {
                                    handleNavigation(fc.args.page as string);
                                    functionResult = `Переход на страницу ${fc.args.page} выполнен.`;
                                 }
-                        
                                 if (fc.name === 'createCommercialProposal') {
                                    const { company, item, amount, direction, date } = fc.args as any;
-                                   
                                    let normalizedDirection: 'РТИ' | '3D' = 'РТИ';
                                    if (typeof direction === 'string' && direction.toUpperCase() === '3D') {
                                        normalizedDirection = '3D';
                                    }
-                        
                                    crudFunctions.addProposal({
                                        date: date || new Date().toISOString().split('T')[0],
                                        direction: normalizedDirection,
@@ -472,7 +425,6 @@ const App: React.FC = () => {
                                    });
                                    functionResult = `Коммерческое предложение для компании ${company} успешно создано.`;
                                 }
-                        
                                 sessionPromise.then((session) => {
                                    session.sendToolResponse({
                                        functionResponses: {
