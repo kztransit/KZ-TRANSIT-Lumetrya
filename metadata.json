@@ -1,0 +1,7 @@
+{
+  "name": "Lumetrya KZ TRANSIT",
+  "description": "Lumetrya is a comprehensive analytics platform for managing marketing campaigns, sales, and business economics. It allows users to track key metrics, analyze conversions, manage advertising campaigns and commercial proposals, and calculate unit economics, with personalized access for each user.",
+  "requestFramePermissions": [
+    "microphone"
+  ]
+}
