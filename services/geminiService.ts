@@ -2,7 +2,7 @@ import { GoogleGenAI, Type, Modality, FunctionDeclaration } from "@google/genai"
 import { CommercialProposal, AdCampaign, Report, Payment } from '../types';
 
 // Assume API_key is set in the environment variables
-const API_KEY = process.env.API_KEY;
+const API_KEY = import.meta.env.VITE_GOOGLE_API_KEY;
 
 if (!API_KEY) {
   console.warn("Gemini API key not found. AI Assistant will not work.");
