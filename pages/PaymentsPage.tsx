@@ -140,6 +140,7 @@ const PaymentsPage: React.FC<PaymentsPageProps> = ({ payments, files, addPayment
         }
     };
     
+    // Эта функция вызывает addPayment из App.tsx, который уже подключен к Supabase
     const handleSave = (paymentData: Omit<Payment, 'id'> | Payment) => {
         if ('id' in paymentData) {
             updatePayment(paymentData);
@@ -162,6 +163,7 @@ const PaymentsPage: React.FC<PaymentsPageProps> = ({ payments, files, addPayment
             const base64Data = await fileToBase64(file);
             const analyzedData = await analyzePaymentInvoice(file.type, base64Data);
 
+            // addFile тоже подключен к Supabase в App.tsx
             const newFile = await addFile({
                 name: file.name,
                 type: file.type,
