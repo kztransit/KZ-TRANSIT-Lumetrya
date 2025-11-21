@@ -1,5 +1,3 @@
-
-
 import React, { useState, useCallback, useMemo, useEffect, useRef } from 'react';
 import { HashRouter, Routes, Route, Navigate, useNavigate } from 'react-router-dom';
 import { v4 as uuidv4 } from 'uuid';
@@ -349,16 +347,23 @@ const App: React.FC = () => {
         userTranscriptRef.current = '';
         aiTranscriptRef.current = '';
 
-        if (!process.env.API_KEY) {
+        // --- ИСПРАВЛЕНИЕ: Получаем ключ через import.meta.env ---
+        const apiKey = import.meta.env.VITE_GOOGLE_API_KEY;
+
+        if (!apiKey) {
             console.error("Gemini API key not found.");
+            alert("Ошибка: API ключ не найден. Убедитесь, что он добавлен в Vercel (VITE_GOOGLE_API_KEY).");
             cleanupVoiceSession();
             return;
         }
         
         try {
-            const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+            // --- ИСПРАВЛЕНИЕ: Используем переменную apiKey ---
+            const ai = new GoogleGenAI({ apiKey: apiKey });
+            
             const sessionPromise = ai.live.connect({
-                model: 'gemini-2.5-flash-native-audio-preview-09-2025',
+                // Если будет ошибка 404/Модель не найдена, попробуйте заменить название ниже на: 'gemini-2.0-flash-exp'
+                model: 'gemini-2.5-flash-native-audio-preview-09-2025', 
                 config: {
                     responseModalities: [Modality.AUDIO],
                     speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName: 'Zephyr' } } },
