@@ -239,9 +239,11 @@ const AdCampaignsPage: React.FC<AdCampaignsPageProps> = ({ campaigns, addCampaig
         conversions: acc.conversions + c.conversions
     }), {impressions: 0, clicks: 0, spend: 0, conversions: 0}), [filteredCampaigns]);
     
+    // ИСПРАВЛЕНО: теперь вызываем addCampaign (который шлет запрос в Supabase) для каждой кампании
     const handleImportSave = (importedCampaigns: Omit<AdCampaign, 'id'>[]) => {
-        const campaignsWithIds = importedCampaigns.map(p => ({ ...p, id: uuidv4() }));
-        setCampaigns(prev => [...prev, ...campaignsWithIds]);
+        importedCampaigns.forEach(campaign => {
+            addCampaign(campaign);
+        });
     };
 
     const handleDeleteCampaign = (id: string) => {
