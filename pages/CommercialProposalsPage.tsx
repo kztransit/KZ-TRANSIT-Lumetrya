@@ -471,9 +471,11 @@ const CommercialProposalsPage: React.FC<CommercialProposalsPageProps> = ({ propo
         setEditingProposal(null);
     };
 
+    // ИСПРАВЛЕНО: Теперь при импорте каждый элемент добавляется через addProposal (который сохраняет в Supabase)
     const handleImport = (importedProposals: Omit<CommercialProposal, 'id'>[]) => {
-        const proposalsWithIds = importedProposals.map(p => ({...p, id: uuidv4()}));
-        setProposals(prevProposals => [...proposalsWithIds, ...prevProposals]);
+        importedProposals.forEach(proposal => {
+            addProposal(proposal);
+        });
     };
     
     const closeForm = () => {
