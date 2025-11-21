@@ -48,8 +48,15 @@ const NetConversionsPage: React.FC<NetConversionsPageProps> = ({ reports, update
         return [...reports].sort((a,b) => new Date(b.creationDate).getTime() - new Date(a.creationDate).getTime());
     }, [reports]);
 
-    const [selectedReportId, setSelectedReportId] = useState<string | null>(sortedReports[0]?.id || null);
+    const [selectedReportId, setSelectedReportId] = useState<string | null>(null);
     const [isEditing, setIsEditing] = useState(false);
+
+    // Устанавливаем дефолтный ID при загрузке
+    useEffect(() => {
+        if (sortedReports.length > 0 && !selectedReportId) {
+            setSelectedReportId(sortedReports[0].id);
+        }
+    }, [sortedReports, selectedReportId]);
 
     const selectedReport = useMemo(() => {
         return sortedReports.find(r => r.id === selectedReportId) || null;
@@ -58,9 +65,12 @@ const NetConversionsPage: React.FC<NetConversionsPageProps> = ({ reports, update
     const dataPoints = useMemo(() => {
         if (!selectedReport) return { totalLeads: 0, qualified: 0, proposals: 0, invoices: 0, deals: 0 };
         const m = selectedReport.metrics;
+        // Безопасное чтение netMetrics
+        const qualified = selectedReport.netMetrics?.qualifiedLeads ?? 0;
+        
         return {
             totalLeads: m.leads,
-            qualified: selectedReport.netMetrics?.qualifiedLeads ?? 0,
+            qualified,
             proposals: m.proposals,
             invoices: m.invoices,
             deals: m.deals,
@@ -79,23 +89,27 @@ const NetConversionsPage: React.FC<NetConversionsPageProps> = ({ reports, update
     
     const handleSave = (qualifiedLeadsValue: number) => {
         if (!selectedReport) return;
+        
         const updatedReport = {
             ...selectedReport,
             netMetrics: {
-                ...selectedReport.netMetrics,
+                ...(selectedReport.netMetrics || {}), // Сохраняем старые метрики, если были
                 qualifiedLeads: qualifiedLeadsValue,
             }
         };
+        // Вызываем функцию обновления (она подключена к Supabase в App.tsx)
         updateReport(updatedReport);
         setIsEditing(false);
     };
 
     const handleDelete = () => {
         if (!selectedReport) return;
+        if (!window.confirm('Сбросить количество квалифицированных лидов до 0?')) return;
+
         const updatedReport = {
             ...selectedReport,
             netMetrics: {
-                ...selectedReport.netMetrics,
+                ...(selectedReport.netMetrics || {}),
                 qualifiedLeads: 0,
             }
         };
@@ -113,12 +127,14 @@ const NetConversionsPage: React.FC<NetConversionsPageProps> = ({ reports, update
 
     return (
         <div>
-            <EditModal 
-                isOpen={isEditing}
-                onClose={() => setIsEditing(false)}
-                onSave={handleSave}
-                initialValue={selectedReport?.netMetrics?.qualifiedLeads || 0}
-            />
+            {selectedReport && (
+                <EditModal 
+                    isOpen={isEditing}
+                    onClose={() => setIsEditing(false)}
+                    onSave={handleSave}
+                    initialValue={selectedReport.netMetrics?.qualifiedLeads || 0}
+                />
+            )}
             <h1 className="text-3xl font-bold mb-2 text-slate-900">Чистые конверсии</h1>
             <p className="text-slate-500 mb-6">Анализ конверсий с квалифицированными лидами</p>
 
@@ -141,7 +157,7 @@ const NetConversionsPage: React.FC<NetConversionsPageProps> = ({ reports, update
                     </div>
                     <div className="flex space-x-2">
                         <button onClick={() => setIsEditing(true)} className="bg-gray-100 hover:bg-gray-200 text-slate-800 font-bold py-2 px-4 rounded-lg text-sm">Редактировать</button>
-                        <button onClick={handleDelete} className="bg-red-500/10 hover:bg-red-500/20 text-red-700 font-bold py-2 px-4 rounded-lg text-sm">Удалить</button>
+                        <button onClick={handleDelete} className="bg-red-500/10 hover:bg-red-500/20 text-red-700 font-bold py-2 px-4 rounded-lg text-sm">Сбросить</button>
                     </div>
                 </div>
 
