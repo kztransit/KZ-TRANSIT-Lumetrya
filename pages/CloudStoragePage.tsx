@@ -93,28 +93,29 @@ const CloudStoragePage: React.FC<CloudStoragePageProps> = ({ links, files, addLi
     const fileInputRef = useRef<HTMLInputElement>(null);
 
     const handleFileChange = async (event: React.ChangeEvent<HTMLInputElement>) => {
-        if (event.target.files) {
-            // FIX: Iterate directly over the FileList. `Array.from` can cause type inference issues.
-            // Fix: Changed `Array.from(event.target.files)` to `event.target.files` to ensure correct type inference for the `file` object.
-            for (let i = 0; i < event.target.files.length; i++) {
-                const file = event.target.files[i];
-                if (file) {
-                    try {
-                        const content = await fileToBase64(file);
-                        const newFile: Omit<StoredFile, 'id'> = {
-                            name: file.name,
-                            type: file.type,
-                            size: file.size,
-                            content: content,
-                            date: new Date().toISOString(),
-                        };
-                        addFile(newFile);
-                    } catch (error) {
-                        console.error("Error processing file:", error);
-                        alert(`Не удалось обработать файл ${file.name}.`);
-                    }
+        if (event.target.files && event.target.files.length > 0) {
+            // Используем Array.from для безопасного перебора FileList
+            const fileList = Array.from(event.target.files);
+            
+            for (const file of fileList) {
+                try {
+                    const content = await fileToBase64(file);
+                    const newFile: Omit<StoredFile, 'id'> = {
+                        name: file.name,
+                        type: file.type,
+                        size: file.size,
+                        content: content,
+                        date: new Date().toISOString(),
+                    };
+                    // addFile уже подключен к Supabase в App.tsx
+                    addFile(newFile);
+                } catch (error) {
+                    console.error("Error processing file:", error);
+                    alert(`Не удалось обработать файл ${file.name}.`);
                 }
             }
+            // Очищаем инпут, чтобы можно было загрузить тот же файл снова
+            event.target.value = '';
         }
     };
     
