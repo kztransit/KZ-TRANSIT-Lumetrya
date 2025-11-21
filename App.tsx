@@ -84,7 +84,7 @@ const App: React.FC = () => {
         document.documentElement.classList.remove('dark');
     }, [userData.companyProfile.darkModeEnabled]);
 
-    // Логика авторизации (Mock)
+    // Логика авторизации
     useEffect(() => {
         const rememberedUserJSON = localStorage.getItem('rememberedUser');
         if (rememberedUserJSON) {
@@ -124,7 +124,6 @@ const App: React.FC = () => {
     
     // --- CRUD ФУНКЦИИ ---
     const crudFunctions = useMemo(() => ({
-        // REPORTS
         setReports: (updater: Report[] | ((prevReports: Report[]) => Report[])) => {
             setUserData(prev => ({ ...prev, reports: typeof updater === 'function' ? updater(prev.reports) : updater }));
         },
@@ -141,8 +140,6 @@ const App: React.FC = () => {
             await apiDeleteReport(id);
             setUserData(prev => ({ ...prev, reports: prev.reports.filter(r => r.id !== id) }));
         },
-
-        // OTHER REPORTS
         addOtherReport: async (report: Omit<OtherReport, 'id'>) => {
             const newReport = { ...report, id: uuidv4() };
             await apiAddOtherReport(newReport);
@@ -156,8 +153,6 @@ const App: React.FC = () => {
             await apiDeleteOtherReport(id);
             setUserData(prev => ({ ...prev, otherReports: prev.otherReports.filter(r => r.id !== id) }));
         },
-
-        // PROPOSALS
         setProposals: (updater: CommercialProposal[] | ((prevProposals: CommercialProposal[]) => CommercialProposal[])) => {
             setUserData(prev => ({ ...prev, proposals: typeof updater === 'function' ? updater(prev.proposals) : updater }));
         },
@@ -179,8 +174,6 @@ const App: React.FC = () => {
             await apiDeleteProposal(id);
             setUserData(prev => ({ ...prev, proposals: prev.proposals.filter(p => p.id !== id) }));
         },
-
-        // CAMPAIGNS
         setCampaigns: (updater: AdCampaign[] | ((prevCampaigns: AdCampaign[]) => AdCampaign[])) => {
             setUserData(prev => ({ ...prev, campaigns: typeof updater === 'function' ? updater(prev.campaigns) : updater }));
         },
@@ -198,8 +191,6 @@ const App: React.FC = () => {
             await apiDeleteCampaign(id);
             setUserData(prev => ({ ...prev, campaigns: prev.campaigns.filter(c => c.id !== id) }));
         },
-
-        // LINKS
         addLink: async (link: Omit<Link, 'id'>) => {
             const newLink = { ...link, id: uuidv4() };
             await apiAddLink(newLink);
@@ -209,8 +200,6 @@ const App: React.FC = () => {
             await apiDeleteLink(id);
             setUserData(prev => ({ ...prev, links: prev.links.filter(l => l.id !== id) }));
         },
-        
-        // FILES
         addFile: async (fileData: Omit<StoredFile, 'id'>) => {
             const newFile = { ...fileData, id: uuidv4() };
             await apiAddFile(newFile);
@@ -221,8 +210,6 @@ const App: React.FC = () => {
             await apiDeleteFile(id);
             setUserData(prev => ({ ...prev, files: prev.files.filter(f => f.id !== id) }));
         },
-
-        // PAYMENTS
         addPayment: async (payment: Omit<Payment, 'id'>) => {
             const newPayment = { ...payment, id: uuidv4() };
             await apiAddPayment(newPayment);
@@ -236,14 +223,10 @@ const App: React.FC = () => {
             await apiDeletePayment(id);
             setUserData(prev => ({ ...prev, payments: prev.payments.filter(p => p.id !== id) }));
         },
-        
-        // COMPANY PROFILE
         setCompanyProfile: async (profile: CompanyProfile) => {
             await apiUpdateCompanyProfile(profile);
             setUserData(prev => ({ ...prev, companyProfile: profile }));
         },
-
-        // ALL USER DATA
         setAllUserData: (data: UserData) => {
             setUserData(data);
         },
@@ -287,34 +270,43 @@ const App: React.FC = () => {
         navigate(page);
     };
 
-    // --- ФУНКЦИЯ ДЛЯ СБОРКИ КОНТЕКСТА (ЧТОБЫ AI ВИДЕЛ ДАННЫЕ) ---
+    // --- ФУНКЦИЯ ДЛЯ СБОРКИ КОНТЕКСТА ---
     const generateContext = (data: UserData) => {
+        // Предварительные расчеты для ума AI
+        const totalRevenue = data.reports.reduce((acc, r) => acc + (r.metrics?.sales || 0), 0);
+        const activeProposals = data.proposals.filter(p => p.status === 'Ожидание').length;
+        const activeCampaigns = data.campaigns.filter(c => c.status === 'Включено').length;
+        const today = new Date().toLocaleDateString('ru-RU');
+
         return `
-        СИСТЕМНАЯ ИНСТРУКЦИЯ: ${data.companyProfile.aiSystemInstruction}
-
-        ВНИМАНИЕ! НИЖЕ ПРЕДСТАВЛЕНЫ АКТУАЛЬНЫЕ ДАННЫЕ КОМПАНИИ В ФОРМАТЕ JSON.
-        ИСПОЛЬЗУЙ ЭТИ ДАННЫЕ ДЛЯ ОТВЕТОВ НА ВОПРОСЫ ПОЛЬЗОВАТЕЛЯ.
+        СЕГОДНЯШНЯЯ ДАТА: ${today}
         
-        1. ПРОФИЛЬ КОМПАНИИ:
-        Название: ${data.companyProfile.companyName}
-        Детали: ${JSON.stringify(data.companyProfile.details)}
+        РОЛЬ И ЯЗЫК:
+        Ты — бизнес-ассистент Lumi для компании ${data.companyProfile.companyName}. 
+        Ты говоришь ИСКЛЮЧИТЕЛЬНО на РУССКОМ языке. Будь вежлив, краток и профессионален.
+        
+        ПРАВИЛА ПРОИЗНОШЕНИЯ (КРИТИЧЕСКИ ВАЖНО):
+        1. Все числа, суммы, проценты и даты произноси СТРОГО словами на русском языке.
+        2. Валюту "₸" читай как "тенге".
+        3. "3D" читай как "Три-Дэ", "KPI" как "Ки-Пи-Ай", "ROI" как "Рой".
+        4. Не переходи на английское произношение цифр.
 
-        2. ФИНАНСОВЫЕ ОТЧЕТЫ (Reports):
-        ${JSON.stringify(data.reports)}
+        КРАТКАЯ СВОДКА ПО КОМПАНИИ:
+        - Общая выручка (по отчетам): ${totalRevenue} тенге.
+        - Активных КП в ожидании: ${activeProposals} шт.
+        - Активных рекламных кампаний: ${activeCampaigns} шт.
+        
+        СИСТЕМНАЯ ИНСТРУКЦИЯ ИЗ ПРОФИЛЯ: ${data.companyProfile.aiSystemInstruction}
 
-        3. КОММЕРЧЕСКИЕ ПРЕДЛОЖЕНИЯ (Proposals):
-        ${JSON.stringify(data.proposals)}
-
-        4. РЕКЛАМНЫЕ КАМПАНИИ (Campaigns):
-        ${JSON.stringify(data.campaigns)}
-
-        5. ПЛАТЕЖИ (Payments):
-        ${JSON.stringify(data.payments)}
-
-        6. ДРУГИЕ ОТЧЕТЫ:
-        ${JSON.stringify(data.otherReports)}
-
-        Если пользователь спрашивает о цифрах, ищи их в этих данных.
+        ВНИМАНИЕ! НИЖЕ ПРЕДСТАВЛЕНЫ ПОЛНЫЕ ДАННЫЕ ИЗ БАЗЫ (В ФОРМАТЕ JSON):
+        Используй их для точных ответов. Если данных нет, так и скажи.
+        
+        1. ПРОФИЛЬ: ${JSON.stringify(data.companyProfile.details)}
+        2. ФИНАНСОВЫЕ ОТЧЕТЫ: ${JSON.stringify(data.reports)}
+        3. КП (Коммерческие предложения): ${JSON.stringify(data.proposals)}
+        4. РЕКЛАМНЫЕ КАМПАНИИ: ${JSON.stringify(data.campaigns)}
+        5. ПЛАТЕЖИ И ПОДПИСКИ: ${JSON.stringify(data.payments)}
+        6. ДРУГИЕ ОТЧЕТЫ: ${JSON.stringify(data.otherReports)}
         `;
     };
 
@@ -335,7 +327,7 @@ const App: React.FC = () => {
 
         if (!apiKey) {
             console.error("Gemini API key not found.");
-            alert("Ошибка: API ключ не найден.");
+            alert("Ошибка: API ключ не найден. Убедитесь, что он добавлен в Vercel (VITE_GOOGLE_API_KEY).");
             cleanupVoiceSession();
             return;
         }
@@ -343,7 +335,7 @@ const App: React.FC = () => {
         try {
             const ai = new GoogleGenAI({ apiKey: apiKey });
             
-            // Генерируем полный контекст с данными перед подключением
+            // Генерируем контекст с данными
             const fullSystemInstruction = generateContext(userData);
 
             const sessionPromise = ai.live.connect({
@@ -351,7 +343,6 @@ const App: React.FC = () => {
                 config: {
                     responseModalities: [Modality.AUDIO],
                     speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName: 'Zephyr' } } },
-                    // Вставляем полную инструкцию с данными
                     systemInstruction: fullSystemInstruction,
                     inputAudioTranscription: {},
                     outputAudioTranscription: {},
@@ -379,7 +370,14 @@ const App: React.FC = () => {
                                 data: encode(new Uint8Array(int16.buffer)),
                                 mimeType: 'audio/pcm;rate=16000',
                             };
-                            sessionPromise.then(session => session.sendRealtimeInput({ media: pcmBlob }));
+                            // ОТПРАВКА С ПРОВЕРКОЙ ОШИБОК
+                            sessionPromise.then(session => {
+                                try {
+                                    session.sendRealtimeInput({ media: pcmBlob });
+                                } catch (e) {
+                                    // Игнорируем ошибку закрытого сокета
+                                }
+                            });
                         };
                         mediaStreamSourceRef.current.connect(scriptProcessorRef.current);
                         scriptProcessorRef.current.connect(inputAudioContextRef.current.destination);
