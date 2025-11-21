@@ -24,7 +24,7 @@ import VoiceAssistantOverlay from './components/VoiceAssistantOverlay';
 import { initialUserData, mockUser } from './services/mockData';
 import { User, UserData, Report, CommercialProposal, AdCampaign, Link, StoredFile, CompanyProfile, Payment, OtherReport } from './types';
 
-// ИМПОРТИРУЕМ НОВЫЙ API
+// ИМПОРТ НОВОГО API SUPABASE
 import { 
   fetchFullUserData, 
   apiAddReport, apiUpdateReport, apiDeleteReport,
@@ -63,7 +63,7 @@ const App: React.FC = () => {
     const userTranscriptRef = useRef('');
     const aiTranscriptRef = useRef('');
     
-    // --- ЗАГРУЗКА ИЗ SUPABASE ---
+    // --- ЗАГРУЗКА ИЗ SUPABASE (При старте) ---
     useEffect(() => {
         const loadData = async () => {
             setIsLoadingData(true);
@@ -80,11 +80,13 @@ const App: React.FC = () => {
         loadData();
     }, []);
 
-    // Effect for Dark Mode
+    // --- ПРИНУДИТЕЛЬНАЯ СВЕТЛАЯ ТЕМА ---
     useEffect(() => {
-        document.documentElement.classList.toggle('dark', !!userData.companyProfile.darkModeEnabled);
+        // Всегда удаляем класс dark, чтобы тема была светлой
+        document.documentElement.classList.remove('dark');
     }, [userData.companyProfile.darkModeEnabled]);
 
+    // Логика авторизации (Mock)
     useEffect(() => {
         const rememberedUserJSON = localStorage.getItem('rememberedUser');
         if (rememberedUserJSON) {
@@ -122,11 +124,10 @@ const App: React.FC = () => {
         localStorage.removeItem('rememberedUser');
     }, []);
     
-    // --- ОБНОВЛЕННЫЕ ФУНКЦИИ CRUD (С СОХРАНЕНИЕМ В SUPABASE) ---
+    // --- CRUD ФУНКЦИИ С ИНТЕГРАЦИЕЙ SUPABASE ---
     const crudFunctions = useMemo(() => ({
         // REPORTS
         setReports: (updater: Report[] | ((prevReports: Report[]) => Report[])) => {
-             // SetReports используется редко, для массового обновления оставим локально пока
             setUserData(prev => ({
                 ...prev,
                 reports: typeof updater === 'function' ? updater(prev.reports) : updater,
@@ -134,23 +135,21 @@ const App: React.FC = () => {
         },
         addReport: async (report: Omit<Report, 'id'>) => {
             const newReport = { ...report, id: uuidv4() };
-            // 1. Сохраняем в Supabase
-            await apiAddReport(newReport);
-            // 2. Обновляем интерфейс
+            await apiAddReport(newReport); // Сохранение в БД
             setUserData(prev => ({
                 ...prev,
                 reports: [newReport, ...prev.reports],
             }));
         },
         updateReport: async (updatedReport: Report) => {
-            await apiUpdateReport(updatedReport);
+            await apiUpdateReport(updatedReport); // Обновление в БД
             setUserData(prev => ({
                 ...prev,
                 reports: prev.reports.map(r => r.id === updatedReport.id ? updatedReport : r),
             }));
         },
         deleteReport: async (id: string) => {
-            await apiDeleteReport(id);
+            await apiDeleteReport(id); // Удаление из БД
             setUserData(prev => ({
                 ...prev,
                 reports: prev.reports.filter(r => r.id !== id),
@@ -204,9 +203,7 @@ const App: React.FC = () => {
             }));
         },
         addMultipleProposals: async (proposals: Omit<CommercialProposal, 'id'>[]) => {
-            // Для множественного добавления
             const newProposals = proposals.map(p => ({ ...p, id: uuidv4() }));
-            // Сохраняем каждый (можно оптимизировать, но для начала так)
             for (const p of newProposals) await apiAddProposal(p);
             
             setUserData(prev => ({
@@ -240,7 +237,6 @@ const App: React.FC = () => {
         addMultipleCampaigns: async (campaigns: Omit<AdCampaign, 'id'>[]) => {
             const newCampaigns = campaigns.map(c => ({ ...c, id: uuidv4() }));
             for (const c of newCampaigns) await apiAddCampaign(c);
-
             setUserData(prev => ({
                 ...prev,
                 campaigns: [...newCampaigns, ...prev.campaigns],
@@ -379,6 +375,7 @@ const App: React.FC = () => {
         userTranscriptRef.current = '';
         aiTranscriptRef.current = '';
 
+        // --- ИСПРАВЛЕНИЕ КЛЮЧА ---
         const apiKey = import.meta.env.VITE_GOOGLE_API_KEY;
 
         if (!apiKey) {
@@ -389,10 +386,12 @@ const App: React.FC = () => {
         }
         
         try {
+            // --- ИСПРАВЛЕНИЕ: Передаем apiKey ---
             const ai = new GoogleGenAI({ apiKey: apiKey });
             
             const sessionPromise = ai.live.connect({
-                model: 'gemini-2.5-flash-native-audio-preview-09-2025', 
+                // --- ИСПРАВЛЕНИЕ: Используем стабильную модель ---
+                model: 'gemini-2.0-flash-exp',
                 config: {
                     responseModalities: [Modality.AUDIO],
                     speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName: 'Zephyr' } } },
