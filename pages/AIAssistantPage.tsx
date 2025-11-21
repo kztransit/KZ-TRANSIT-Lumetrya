@@ -1,9 +1,7 @@
-
-
 import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { v4 as uuidv4 } from 'uuid';
-import { GoogleGenAI, LiveServerMessage, Modality, Blob } from "@google/genai";
+import { GoogleGenAI, LiveSession, LiveServerMessage, Modality, Blob } from "@google/genai";
 import { getAIAssistantResponse, analyzeReportImage, analyzeProposalsImage, analyzeCampaignsImage, createOtherReportFunctionDeclaration, updateOtherReportKpiFunctionDeclaration, createCommercialProposalFunctionDeclaration, updateCommercialProposalFunctionDeclaration } from '../services/geminiService';
 import { UserData, Report, CommercialProposal, AdCampaign, OtherReport, OtherReportKpi } from '../types';
 import { fileToBase64, decode, decodeAudioData, encode } from '../utils';
@@ -15,6 +13,38 @@ interface Message {
     text: string;
     sender: 'user' | 'ai';
 }
+
+// --- ВСПОМОГАТЕЛЬНАЯ ФУНКЦИЯ ДЛЯ КОНТЕКСТА ---
+// Собираем все данные в текст, чтобы AI их видел
+const generateContext = (data: UserData) => {
+    return `
+    СИСТЕМНАЯ ИНСТРУКЦИЯ: ${data.companyProfile.aiSystemInstruction}
+
+    ВНИМАНИЕ! НИЖЕ ПРЕДСТАВЛЕНЫ АКТУАЛЬНЫЕ ДАННЫЕ КОМПАНИИ В ФОРМАТЕ JSON.
+    ИСПОЛЬЗУЙ ЭТИ ДАННЫЕ ДЛЯ ОТВЕТОВ НА ВОПРОСЫ ПОЛЬЗОВАТЕЛЯ.
+    
+    1. ПРОФИЛЬ КОМПАНИИ:
+    Название: ${data.companyProfile.companyName}
+    Детали: ${JSON.stringify(data.companyProfile.details)}
+
+    2. ФИНАНСОВЫЕ ОТЧЕТЫ (Reports):
+    ${JSON.stringify(data.reports)}
+
+    3. КОММЕРЧЕСКИЕ ПРЕДЛОЖЕНИЯ (Proposals):
+    ${JSON.stringify(data.proposals)}
+
+    4. РЕКЛАМНЫЕ КАМПАНИИ (Campaigns):
+    ${JSON.stringify(data.campaigns)}
+
+    5. ПЛАТЕЖИ (Payments):
+    ${JSON.stringify(data.payments)}
+
+    6. ДРУГИЕ ОТЧЕТЫ:
+    ${JSON.stringify(data.otherReports)}
+
+    Если пользователь спрашивает о цифрах, ищи их в этих данных.
+    `;
+};
 
 const UploadTypeModal: React.FC<{onClose: () => void, onSelect: (type: UploadType) => void}> = ({onClose, onSelect}) => (
     <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4">
@@ -432,20 +462,28 @@ const AIAssistantPage: React.FC<AIAssistantPageProps> = ({
         aiTranscriptRef.current = '';
         setError('');
 
-        if (!process.env.API_KEY) {
+        // --- ИСПРАВЛЕНИЕ КЛЮЧА ---
+        const apiKey = import.meta.env.VITE_GOOGLE_API_KEY;
+
+        if (!apiKey) {
             setError("Ключ API для Gemini не найден. Голосовой помощник не может работать.");
             setSessionStatus('idle');
             return;
         }
 
         try {
-            const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+            const ai = new GoogleGenAI({ apiKey: apiKey });
+            
+            // --- ИСПРАВЛЕНИЕ КОНТЕКСТА (Чтобы AI видел данные) ---
+            const fullContext = generateContext(userData);
+
             const sessionPromise = ai.live.connect({
-                model: 'gemini-2.5-flash-native-audio-preview-09-2025',
+                // --- ИСПРАВЛЕНИЕ МОДЕЛИ ---
+                model: 'gemini-2.0-flash-exp',
                 config: {
                     responseModalities: [Modality.AUDIO],
                     speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName: 'Zephyr' } } },
-                    systemInstruction: userData.companyProfile.aiSystemInstruction,
+                    systemInstruction: fullContext, // <-- Передаем полный контекст
                     inputAudioTranscription: {},
                     outputAudioTranscription: {},
                     tools: [{functionDeclarations: [
@@ -637,7 +675,9 @@ const AIAssistantPage: React.FC<AIAssistantPageProps> = ({
         setIsLoading(true);
         
         try {
-            const { text, functionCall } = await getAIAssistantResponse(textToSend, userData, userData.companyProfile.aiSystemInstruction);
+            // --- ИСПРАВЛЕНИЕ: Передаем ПОЛНЫЙ контекст данных в текстовый чат ---
+            const fullContext = generateContext(userData);
+            const { text, functionCall } = await getAIAssistantResponse(textToSend, userData, fullContext);
             
             if (functionCall) {
                  let confirmationMessage = text;
