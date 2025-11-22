@@ -1,7 +1,7 @@
 import { GoogleGenAI, FunctionDeclaration } from "@google/genai";
 import { UserData } from "../types";
 
-// --- ИНСТРУМЕНТЫ (Определения оставлены для совместимости, но отключены в текстовом чате) ---
+// --- ИНСТРУМЕНТЫ (Экспортируем их для Voice Assistant в других файлах, но здесь не используем) ---
 export const navigationFunctionDeclaration: FunctionDeclaration = {
     name: 'navigateToPage',
     description: 'Переходит на указанную страницу приложения.',
@@ -85,8 +85,11 @@ export const analyzeReportImage = async (mimeType: string, base64Data: string): 
         config: { systemInstruction: "Извлеки данные в JSON: { 'РТИ': {...}, '3D': {...} }." },
         contents: [{ role: "user", parts: [{ inlineData: { mimeType, data: base64Data } }, { text: "Данные отчета" }] }]
     });
-    return cleanJson(response.text());
+    // Безопасное получение текста
+    const text = typeof response.text === 'function' ? response.text() : (response.candidates?.[0]?.content?.parts?.[0]?.text || "{}");
+    return cleanJson(text);
 };
+
 export const analyzeProposalsImage = async (mimeType: string, base64Data: string): Promise<any> => {
     const apiKey = import.meta.env.VITE_GOOGLE_API_KEY;
     if (!apiKey) throw new Error("API Key not found");
@@ -96,8 +99,10 @@ export const analyzeProposalsImage = async (mimeType: string, base64Data: string
         config: { systemInstruction: "Извлеки КП в JSON { 'РТИ': [], '3D': [] }." },
         contents: [{ role: "user", parts: [{ inlineData: { mimeType, data: base64Data } }, { text: "Список КП" }] }]
     });
-    return JSON.parse(cleanJson(response.text()));
+    const text = typeof response.text === 'function' ? response.text() : (response.candidates?.[0]?.content?.parts?.[0]?.text || "{}");
+    return JSON.parse(cleanJson(text));
 };
+
 export const analyzeCampaignsImage = async (mimeType: string, base64Data: string): Promise<any[]> => {
     const apiKey = import.meta.env.VITE_GOOGLE_API_KEY;
     if (!apiKey) throw new Error("API Key not found");
@@ -107,31 +112,11 @@ export const analyzeCampaignsImage = async (mimeType: string, base64Data: string
         config: { systemInstruction: "Извлеки кампании в JSON []." },
         contents: [{ role: "user", parts: [{ inlineData: { mimeType, data: base64Data } }, { text: "Таблица кампаний" }] }]
     });
-    return JSON.parse(cleanJson(response.text()));
-};
-export const analyzePaymentInvoice = async (mimeType: string, base64Data: string): Promise<any> => {
-    const apiKey = import.meta.env.VITE_GOOGLE_API_KEY;
-    if (!apiKey) throw new Error("API Key not found");
-    const client = new GoogleGenAI({ apiKey });
-    const response = await client.models.generateContent({
-        model: "models/gemini-2.0-flash-exp",
-        config: { systemInstruction: "Проанализируй счет. Верни JSON: { serviceName, amount, currency, paymentPeriod, lastPaymentDate, paymentDetails, paymentMethod }." },
-        contents: [{ role: "user", parts: [{ inlineData: { mimeType, data: base64Data } }, { text: "Данные платежа" }] }]
-    });
-    return JSON.parse(cleanJson(response.text()));
-};
-export const analyzeDataConsistency = async (reports: any[]): Promise<string> => {
-    const apiKey = import.meta.env.VITE_GOOGLE_API_KEY;
-    if (!apiKey) throw new Error("API Key not found");
-    const client = new GoogleGenAI({ apiKey });
-    const response = await client.models.generateContent({
-        model: "models/gemini-2.0-flash-exp",
-        contents: [{ role: "user", parts: [{ text: `Analyze: ${JSON.stringify(reports.slice(-5))}` }] }]
-    });
-    return response.text() || "Error";
+    const text = typeof response.text === 'function' ? response.text() : (response.candidates?.[0]?.content?.parts?.[0]?.text || "[]");
+    return JSON.parse(cleanJson(text));
 };
 
-// --- ГЛАВНАЯ ФУНКЦИЯ ТЕКСТОВОГО ЧАТА (ИСПРАВЛЕНА) ---
+// --- ГЛАВНАЯ ФУНКЦИЯ ТЕКСТОВОГО ЧАТА ---
 export const getAIAssistantResponse = async (prompt: string, userData: UserData, systemInstruction: string) => {
     const apiKey = import.meta.env.VITE_GOOGLE_API_KEY;
     if (!apiKey) throw new Error("API Key not found");
@@ -139,8 +124,6 @@ export const getAIAssistantResponse = async (prompt: string, userData: UserData,
     const client = new GoogleGenAI({ apiKey });
     
     try {
-        // ИСПОЛЬЗУЕМ generateContent НАПРЯМУЮ
-        // Оставляем только googleSearch, убираем functionDeclarations, чтобы избежать конфликта 400 Bad Request
         const response = await client.models.generateContent({
             model: "models/gemini-2.0-flash-exp",
             config: {
@@ -148,6 +131,7 @@ export const getAIAssistantResponse = async (prompt: string, userData: UserData,
                     parts: [{ text: systemInstruction }]
                 },
                 tools: [
+                    // ✅ Оставляем ТОЛЬКО Google Search для текстового режима
                     { googleSearch: {} } 
                 ]
             },
@@ -159,9 +143,34 @@ export const getAIAssistantResponse = async (prompt: string, userData: UserData,
             ]
         });
 
-        // Так как функции отключены, здесь всегда будет null,
-        // но оставляем структуру возврата для совместимости с React-компонентом
-        return { text: response.text(), functionCall: null };
+        // 🛠 ИСПРАВЛЕНИЕ ОШИБКИ: Безопасное извлечение текста
+        let responseText = "";
+        
+        // 1. Пробуем стандартный метод (если он есть)
+        if (typeof response.text === 'function') {
+            try {
+                responseText = response.text();
+            } catch (e) {
+                // Иногда метод есть, но падает, если контент заблокирован или пуст
+                console.warn("response.text() failed, trying manual extraction");
+            }
+        }
+
+        // 2. Если метод не сработал или его нет, лезем внутрь объекта
+        if (!responseText && response.candidates && response.candidates.length > 0) {
+            const parts = response.candidates[0].content?.parts;
+            if (parts && parts.length > 0) {
+                responseText = parts.map((p: any) => p.text).join('');
+            }
+        }
+
+        // 3. Фолбэк, если совсем ничего нет
+        if (!responseText) {
+            responseText = "Извините, не удалось получить текстовый ответ от модели.";
+        }
+
+        // Возвращаем только текст, так как функции отключены
+        return { text: responseText, functionCall: null };
         
     } catch (error: any) {
         console.error("GEMINI ERROR:", error);
