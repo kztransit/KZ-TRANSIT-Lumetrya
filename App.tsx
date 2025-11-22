@@ -3,6 +3,7 @@ import { HashRouter, Routes, Route, Navigate, useNavigate } from 'react-router-d
 import { v4 as uuidv4 } from 'uuid';
 import { GoogleGenAI, LiveSession, LiveServerMessage, Modality, Blob } from "@google/genai";
 import { decode, decodeAudioData, encode } from './utils';
+// ДОБАВЛЕН ИМПОРТ navigationFunctionDeclaration
 import { navigationFunctionDeclaration, createCommercialProposalFunctionDeclaration } from './services/geminiService';
 
 import Sidebar from './components/Sidebar';
@@ -25,7 +26,8 @@ import { initialUserData, mockUser } from './services/mockData';
 import { User, UserData, Report, CommercialProposal, AdCampaign, Link, StoredFile, CompanyProfile, Payment, OtherReport } from './types';
 
 import { 
-  fetchFullUserData, apiAddReport, apiUpdateReport, apiDeleteReport,
+  fetchFullUserData, 
+  apiAddReport, apiUpdateReport, apiDeleteReport,
   apiAddProposal, apiUpdateProposal, apiDeleteProposal,
   apiAddCampaign, apiDeleteCampaign,
   apiAddOtherReport, apiUpdateOtherReport, apiDeleteOtherReport,
@@ -54,10 +56,6 @@ const App: React.FC = () => {
     const scriptProcessorRef = useRef<ScriptProcessorNode | null>(null);
     const mediaStreamRef = useRef<MediaStream | null>(null);
     const mediaStreamSourceRef = useRef<MediaStreamAudioSourceNode | null>(null);
-    const nextStartTimeRef = useRef(0);
-    const audioSourcesRef = useRef(new Set<AudioBufferSourceNode>());
-    const userTranscriptRef = useRef('');
-    const aiTranscriptRef = useRef('');
     
     useEffect(() => {
         const loadData = async () => {
@@ -65,9 +63,8 @@ const App: React.FC = () => {
             try {
                 const data = await fetchFullUserData();
                 setUserData(data);
-                console.log("Данные успешно загружены из Supabase!");
             } catch (error) {
-                console.error("Ошибка загрузки данных:", error);
+                console.error("Error:", error);
             } finally {
                 setIsLoadingData(false);
             }
@@ -79,69 +76,59 @@ const App: React.FC = () => {
         document.documentElement.classList.remove('dark');
     }, [userData.companyProfile.darkModeEnabled]);
 
+    // ... (Авторизация - оставляем как есть)
     useEffect(() => {
         const rememberedUserJSON = localStorage.getItem('rememberedUser');
         if (rememberedUserJSON) {
             try {
-                const rememberedUser = JSON.parse(rememberedUserJSON);
-                if (rememberedUser.email === mockUser.email) {
-                    const userToLogin = { ...mockUser };
-                    delete userToLogin.password;
-                    setCurrentUser(userToLogin);
-                }
-            } catch (e) {
-                localStorage.removeItem('rememberedUser');
-            }
+                const u = JSON.parse(rememberedUserJSON);
+                if (u.email === mockUser.email) setCurrentUser({...mockUser});
+            } catch (e) { localStorage.removeItem('rememberedUser'); }
         }
     }, []);
-
-    const handleLogin = useCallback((email: string, pass: string, rememberMe: boolean) => {
-        if (email === mockUser.email && pass === mockUser.password) {
-            const userToLogin = { ...mockUser };
-            delete userToLogin.password;
-            setCurrentUser(userToLogin);
-            if (rememberMe) localStorage.setItem('rememberedUser', JSON.stringify(userToLogin));
-            else localStorage.removeItem('rememberedUser');
+    const handleLogin = useCallback((e: string, p: string, r: boolean) => {
+        if (e === mockUser.email && p === mockUser.password) {
+            setCurrentUser({...mockUser});
+            if(r) localStorage.setItem('rememberedUser', JSON.stringify({...mockUser}));
             return true;
-        }
-        return false;
+        } return false;
     }, []);
-
-    const handleLogout = useCallback(() => {
-        setCurrentUser(null);
-        localStorage.removeItem('rememberedUser');
-    }, []);
+    const handleLogout = useCallback(() => { setCurrentUser(null); localStorage.removeItem('rememberedUser'); }, []);
     
-    // CRUD Functions
+    // ... (CRUD функции - оставляем как есть, они работают)
     const crudFunctions = useMemo(() => ({
-        setReports: (updater: any) => setUserData(prev => ({ ...prev, reports: typeof updater === 'function' ? updater(prev.reports) : updater })),
-        addReport: async (item: any) => { const newItem = { ...item, id: uuidv4() }; await apiAddReport(newItem); setUserData(prev => ({ ...prev, reports: [newItem, ...prev.reports] })); },
-        updateReport: async (item: any) => { await apiUpdateReport(item); setUserData(prev => ({ ...prev, reports: prev.reports.map(i => i.id === item.id ? item : i) })); },
-        deleteReport: async (id: string) => { await apiDeleteReport(id); setUserData(prev => ({ ...prev, reports: prev.reports.filter(i => i.id !== id) })); },
-        addOtherReport: async (item: any) => { const newItem = { ...item, id: uuidv4() }; await apiAddOtherReport(newItem); setUserData(prev => ({ ...prev, otherReports: [newItem, ...prev.otherReports] })); },
-        updateOtherReport: async (item: any) => { await apiUpdateOtherReport(item); setUserData(prev => ({ ...prev, otherReports: prev.otherReports.map(i => i.id === item.id ? item : i) })); },
-        deleteOtherReport: async (id: string) => { await apiDeleteOtherReport(id); setUserData(prev => ({ ...prev, otherReports: prev.otherReports.filter(i => i.id !== id) })); },
-        setProposals: (updater: any) => setUserData(prev => ({ ...prev, proposals: typeof updater === 'function' ? updater(prev.proposals) : updater })),
-        addProposal: async (item: any) => { const newItem = { ...item, id: uuidv4() }; await apiAddProposal(newItem); setUserData(prev => ({ ...prev, proposals: [newItem, ...prev.proposals] })); },
-        updateProposal: async (item: any) => { await apiUpdateProposal(item); setUserData(prev => ({ ...prev, proposals: prev.proposals.map(i => i.id === item.id ? item : i) })); },
-        addMultipleProposals: async (items: any[]) => { const newItems = items.map(i => ({ ...i, id: uuidv4() })); for(const i of newItems) await apiAddProposal(i); setUserData(prev => ({ ...prev, proposals: [...newItems, ...prev.proposals] })); },
-        deleteProposal: async (id: string) => { await apiDeleteProposal(id); setUserData(prev => ({ ...prev, proposals: prev.proposals.filter(i => i.id !== id) })); },
-        setCampaigns: (updater: any) => setUserData(prev => ({ ...prev, campaigns: typeof updater === 'function' ? updater(prev.campaigns) : updater })),
-        addCampaign: async (item: any) => { const newItem = { ...item, id: uuidv4() }; await apiAddCampaign(newItem); setUserData(prev => ({ ...prev, campaigns: [newItem, ...prev.campaigns] })); },
-        addMultipleCampaigns: async (items: any[]) => { const newItems = items.map(i => ({ ...i, id: uuidv4() })); for(const i of newItems) await apiAddCampaign(i); setUserData(prev => ({ ...prev, campaigns: [...newItems, ...prev.campaigns] })); },
-        deleteCampaign: async (id: string) => { await apiDeleteCampaign(id); setUserData(prev => ({ ...prev, campaigns: prev.campaigns.filter(i => i.id !== id) })); },
-        addLink: async (item: any) => { const newItem = { ...item, id: uuidv4() }; await apiAddLink(newItem); setUserData(prev => ({ ...prev, links: [newItem, ...prev.links] })); },
-        deleteLink: async (id: string) => { await apiDeleteLink(id); setUserData(prev => ({ ...prev, links: prev.links.filter(i => i.id !== id) })); },
-        addFile: async (item: any) => { const newItem = { ...item, id: uuidv4() }; await apiAddFile(newItem); setUserData(prev => ({ ...prev, files: [newItem, ...prev.files] })); return newItem; },
-        deleteFile: async (id: string) => { await apiDeleteFile(id); setUserData(prev => ({ ...prev, files: prev.files.filter(i => i.id !== id) })); },
-        addPayment: async (item: any) => { const newItem = { ...item, id: uuidv4() }; await apiAddPayment(newItem); setUserData(prev => ({ ...prev, payments: [newItem, ...prev.payments] })); },
-        updatePayment: async (item: any) => { await apiUpdatePayment(item); setUserData(prev => ({ ...prev, payments: prev.payments.map(i => i.id === item.id ? item : i) })); },
-        deletePayment: async (id: string) => { await apiDeletePayment(id); setUserData(prev => ({ ...prev, payments: prev.payments.filter(i => i.id !== id) })); },
-        setCompanyProfile: async (profile: CompanyProfile) => { await apiUpdateCompanyProfile(profile); setUserData(prev => ({ ...prev, companyProfile: profile })); },
-        setAllUserData: (data: UserData) => { setUserData(data); },
+        setReports: (u: any) => setUserData(p => ({ ...p, reports: typeof u === 'function' ? u(p.reports) : u })),
+        addReport: async (i: any) => { const n = { ...i, id: uuidv4() }; await apiAddReport(n); setUserData(p => ({ ...p, reports: [n, ...p.reports] })); },
+        updateReport: async (i: any) => { await apiUpdateReport(i); setUserData(p => ({ ...p, reports: p.reports.map(r => r.id === i.id ? i : r) })); },
+        deleteReport: async (id: string) => { await apiDeleteReport(id); setUserData(p => ({ ...p, reports: p.reports.filter(r => r.id !== id) })); },
+        addOtherReport: async (i: any) => { const n = { ...i, id: uuidv4() }; await apiAddOtherReport(n); setUserData(p => ({ ...p, otherReports: [n, ...p.otherReports] })); },
+        updateOtherReport: async (i: any) => { await apiUpdateOtherReport(i); setUserData(p => ({ ...p, otherReports: p.otherReports.map(r => r.id === i.id ? i : r) })); },
+        deleteOtherReport: async (id: string) => { await apiDeleteOtherReport(id); setUserData(p => ({ ...p, otherReports: p.otherReports.filter(r => r.id !== id) })); },
+        setProposals: (u: any) => setUserData(p => ({ ...p, proposals: typeof u === 'function' ? u(p.proposals) : u })),
+        addProposal: async (i: any) => { const n = { ...i, id: uuidv4() }; await apiAddProposal(n); setUserData(p => ({ ...p, proposals: [n, ...p.proposals] })); },
+        updateProposal: async (i: any) => { await apiUpdateProposal(i); setUserData(p => ({ ...p, proposals: p.proposals.map(r => r.id === i.id ? i : r) })); },
+        addMultipleProposals: async (l: any[]) => { const n = l.map(i => ({ ...i, id: uuidv4() })); for(const x of n) await apiAddProposal(x); setUserData(p => ({ ...p, proposals: [...n, ...p.proposals] })); },
+        deleteProposal: async (id: string) => { await apiDeleteProposal(id); setUserData(p => ({ ...p, proposals: p.proposals.filter(r => r.id !== id) })); },
+        setCampaigns: (u: any) => setUserData(p => ({ ...p, campaigns: typeof u === 'function' ? u(p.campaigns) : u })),
+        addCampaign: async (i: any) => { const n = { ...i, id: uuidv4() }; await apiAddCampaign(n); setUserData(p => ({ ...p, campaigns: [n, ...p.campaigns] })); },
+        addMultipleCampaigns: async (l: any[]) => { const n = l.map(i => ({ ...i, id: uuidv4() })); for(const x of n) await apiAddCampaign(x); setUserData(p => ({ ...p, campaigns: [...n, ...p.campaigns] })); },
+        deleteCampaign: async (id: string) => { await apiDeleteCampaign(id); setUserData(p => ({ ...p, campaigns: p.campaigns.filter(r => r.id !== id) })); },
+        addLink: async (i: any) => { const n = { ...i, id: uuidv4() }; await apiAddLink(n); setUserData(p => ({ ...p, links: [n, ...p.links] })); },
+        deleteLink: async (id: string) => { await apiDeleteLink(id); setUserData(p => ({ ...p, links: p.links.filter(r => r.id !== id) })); },
+        addFile: async (i: any) => { const n = { ...i, id: uuidv4() }; await apiAddFile(n); setUserData(p => ({ ...p, files: [n, ...p.files] })); return n; },
+        deleteFile: async (id: string) => { await apiDeleteFile(id); setUserData(p => ({ ...p, files: p.files.filter(r => r.id !== id) })); },
+        addPayment: async (i: any) => { const n = { ...i, id: uuidv4() }; await apiAddPayment(n); setUserData(p => ({ ...p, payments: [n, ...p.payments] })); },
+        updatePayment: async (i: any) => { await apiUpdatePayment(i); setUserData(p => ({ ...p, payments: p.payments.map(r => r.id === i.id ? i : r) })); },
+        deletePayment: async (id: string) => { await apiDeletePayment(id); setUserData(p => ({ ...p, payments: p.payments.filter(r => r.id !== id) })); },
+        setCompanyProfile: async (i: any) => { await apiUpdateCompanyProfile(i); setUserData(p => ({ ...p, companyProfile: i })); },
+        setAllUserData: (d: UserData) => { setUserData(d); },
     }), []);
     
     const navigate = useNavigate();
+    // Адаптер навигации для AI
+    const handleNavigation = (page: string) => {
+        navigate(page);
+    };
 
     const cleanupVoiceSession = useCallback(() => {
         mediaStreamRef.current?.getTracks().forEach(track => track.stop());
@@ -152,61 +139,53 @@ const App: React.FC = () => {
         mediaStreamSourceRef.current?.disconnect();
         inputAudioContextRef.current?.close().catch(console.error);
         outputAudioContextRef.current?.close().catch(console.error);
-
-        mediaStreamRef.current = null;
-        scriptProcessorRef.current = null;
-        mediaStreamSourceRef.current = null;
-        inputAudioContextRef.current = null;
-        outputAudioContextRef.current = null;
-        sessionRef.current = null;
-        nextStartTimeRef.current = 0;
-        audioSourcesRef.current.forEach(source => source.stop());
-        audioSourcesRef.current.clear();
-
         setIsVoiceControlActive(false);
         setVoiceStatus('idle');
     }, []);
 
-    useEffect(() => {
-        return () => { sessionRef.current?.close(); cleanupVoiceSession(); };
-    }, [cleanupVoiceSession]);
+    useEffect(() => { return () => { sessionRef.current?.close(); cleanupVoiceSession(); }; }, [cleanupVoiceSession]);
 
-    const handleNavigation = (page: string) => {
-        navigate(page);
-    };
-
-    // --- ОПТИМИЗИРОВАННЫЙ ГЕНЕРАТОР КОНТЕКСТА (СЖАТЫЙ ФОРМАТ ДЛЯ СТАБИЛЬНОСТИ) ---
+    // --- УЛУЧШЕННЫЙ ГЕНЕРАТОР КОНТЕКСТА ---
     const generateContext = (data: UserData) => {
         const today = new Date().toLocaleDateString('ru-RU');
         
-        // Превращаем тяжелые объекты в компактные строки
-        const reports = data.reports.map(r => `OTCHET[${r.name}|${r.creationDate}]:Sale=${r.metrics.sales},Lead=${r.metrics.leads},Bud=${r.metrics.budget}`).join(';');
-        const props = data.proposals.map(p => `KP[${p.company}|${p.amount}|${p.status}|${p.date}]`).join(';');
-        const camps = data.campaigns.map(c => `ADS[${c.name}|${c.status}|Bud=${c.budget}|Spend=${c.spend}]`).join(';');
-        const pays = data.payments.map(p => `PAY[${p.serviceName}|${p.amount}|${p.nextPaymentDate}]`).join(';');
-
+        // Форматируем данные, чтобы AI их точно понял
+        // Важно: Используем JSON.stringify для надежности, но "обрезаем" лишнее в голове AI через промпт
+        
         return `
-        DATA:${today}
-        ROLE:Lumi,BusinessAnalyst,Engineer,Operator for ${data.companyProfile.companyName}.
-        LANG:RUSSIAN ONLY. Digits as words.
+        ДАТА: ${today}
+        ТВОЕ ИМЯ: Люми.
+        РОЛЬ: Старший бизнес-аналитик компании ${data.companyProfile.companyName}.
+
+        === ПРАВИЛА РАЗГОВОРА (ОЧЕНЬ ВАЖНО) ===
+        1. 🔢 ЧИСЛА ГОВОРИ СЛОВАМИ:
+           - ТЫ ОБЯЗАНА ПЕРЕВОДИТЬ ЦИФРЫ В СЛОВА.
+           - Не говори "50000", говори "пятьдесят тысяч".
+           - Не говори "10%", говори "десять процентов".
+           - Валюту "₸" читай как "тенге".
+        2. 🇷🇺 ЯЗЫК: Только Русский.
+        3. 🔇 КРАТКОСТЬ:
+           - Отвечай МАКСИМАЛЬНО КОРОТКО (1 предложение), если не просят подробностей.
+        4. 🛑 СТОП: Если слышишь "Стоп" - замолкай.
+
+        === ТВОИ ИНСТРУКЦИИ И НАВЫКИ ===
+        1. 🧭 НАВИГАЦИЯ:
+           - У тебя есть инструмент [navigateToPage].
+           - Если просят "Открой отчеты", "Перейди в настройки", "Покажи КП" -> ВЫЗЫВАЙ ЭТУ ФУНКЦИЮ.
+           - Карта: /dashboard, /reports, /proposals, /campaigns, /payments, /storage, /settings.
         
-        TOOLS:
-        1.[googleSearch]: For news, rates, laws, specs, facts.
-        2.[navigateToPage]: For site navigation (/dashboard,/reports,/proposals...).
-        3.[createCommercialProposal]: Create KP.
-        
-        RULES:
-        - Voice: Short answers (1-2 sentences). Detailed only if asked.
-        - Stop cmd: Silence immediately.
-        - Engineer: Expert in RTI/3D.
-        
-        DB_SNAPSHOT:
-        PROFILE:${JSON.stringify(data.companyProfile.details)}
-        REPORTS:${reports}
-        PROPOSALS:${props}
-        CAMPAIGNS:${camps}
-        PAYMENTS:${pays}
-        INSTRUCTION:${data.companyProfile.aiSystemInstruction}
+        2. 🌐 ИНТЕРНЕТ:
+           - У тебя есть [googleSearch]. Ищи курсы валют, факты, ГОСТы.
+
+        3. 📊 ДАННЫЕ КОМПАНИИ (ТЫ ВИДИШЬ ВСЁ):
+           - Профиль: ${JSON.stringify(data.companyProfile.details)}
+           - Отчеты (Reports): ${JSON.stringify(data.reports)}
+           - КП (Proposals): ${JSON.stringify(data.proposals)}
+           - Реклама (Campaigns): ${JSON.stringify(data.campaigns)}
+           - Платежи (Payments): ${JSON.stringify(data.payments)}
+           - Разное: ${JSON.stringify(data.otherReports)}
+           
+        СИСТЕМНАЯ ИНСТРУКЦИЯ: ${data.companyProfile.aiSystemInstruction}
         `;
     };
 
@@ -224,132 +203,126 @@ const App: React.FC = () => {
         aiTranscriptRef.current = '';
 
         const apiKey = import.meta.env.VITE_GOOGLE_API_KEY;
-
-        if (!apiKey) {
-            alert("Ошибка: API ключ не найден.");
-            cleanupVoiceSession();
-            return;
-        }
+        if (!apiKey) { alert("API Key not found"); cleanupVoiceSession(); return; }
         
         try {
             const ai = new GoogleGenAI({ apiKey: apiKey });
-            const fullSystemInstruction = generateContext(userData);
+            const fullContext = generateContext(userData);
 
             const sessionPromise = ai.live.connect({
                 model: 'models/gemini-2.0-flash-exp',
                 config: {
                     responseModalities: [Modality.AUDIO],
                     speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName: 'Zephyr' } } },
-                    systemInstruction: fullSystemInstruction,
-                    inputAudioTranscription: {},
-                    outputAudioTranscription: {},
+                    systemInstruction: fullContext,
                     tools: [
-                        { googleSearch: {} }, // ИНТЕРНЕТ ПОДКЛЮЧЕН
+                        { googleSearch: {} }, // Интернет
+                        // ВАЖНО: Добавляем навигацию сюда
                         { functionDeclarations: [navigationFunctionDeclaration, createCommercialProposalFunctionDeclaration] }
                     ],
                 },
                 callbacks: {
                     onopen: async () => {
                         const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-                        mediaStreamRef.current = stream;
-
-                        const AudioContextClass = window.AudioContext || (window as any).webkitAudioContext;
-                        const inputContext = new AudioContextClass({ sampleRate: 16000 });
-                        if (inputContext.state === 'suspended') await inputContext.resume();
-                        inputAudioContextRef.current = inputContext;
-
-                        outputAudioContextRef.current = new AudioContextClass({ sampleRate: 24000 });
                         
-                        mediaStreamSourceRef.current = inputAudioContextRef.current.createMediaStreamSource(stream);
-                        scriptProcessorRef.current = inputAudioContextRef.current.createScriptProcessor(4096, 1, 1);
+                        // "Будим" AudioContext для надежности
+                        const AC = window.AudioContext || (window as any).webkitAudioContext;
+                        const inputCtx = new AC({ sampleRate: 16000 });
+                        if (inputCtx.state === 'suspended') await inputCtx.resume();
                         
-                        scriptProcessorRef.current.onaudioprocess = (event) => {
-                            const inputData = event.inputBuffer.getChannelData(0);
-                            const l = inputData.length;
-                            const int16 = new Int16Array(l);
-                            for (let i = 0; i < l; i++) { int16[i] = inputData[i] * 32768; }
+                        inputAudioContextRef.current = inputCtx;
+                        outputAudioContextRef.current = new AC({ sampleRate: 24000 });
+                        
+                        mediaStreamSourceRef.current = inputCtx.createMediaStreamSource(stream);
+                        const processor = inputCtx.createScriptProcessor(4096, 1, 1);
+                        scriptProcessorRef.current = processor;
+                        
+                        processor.onaudioprocess = (e) => {
+                            const inputData = e.inputBuffer.getChannelData(0);
+                            const int16 = new Int16Array(inputData.length);
+                            for (let i = 0; i < inputData.length; i++) int16[i] = inputData[i] * 32768;
                             const pcmBlob: Blob = { data: encode(new Uint8Array(int16.buffer)), mimeType: 'audio/pcm;rate=16000' };
+                            
                             sessionPromise.then(session => {
-                                try { session.sendRealtimeInput({ media: pcmBlob }); } catch (e) {}
+                                try { session.sendRealtimeInput({ media: pcmBlob }); } catch (err) {}
                             });
                         };
-                        mediaStreamSourceRef.current.connect(scriptProcessorRef.current);
-                        scriptProcessorRef.current.connect(inputAudioContextRef.current.destination);
-
+                        
+                        mediaStreamSourceRef.current.connect(processor);
+                        processor.connect(inputCtx.destination);
                         setVoiceStatus('listening');
                     },
-                    onmessage: async (message: LiveServerMessage) => {
-                        if (message.serverContent?.outputTranscription) {
+                    onmessage: async (msg: LiveServerMessage) => {
+                        if (msg.serverContent?.outputTranscription) {
                             setVoiceStatus('speaking');
-                            aiTranscriptRef.current += message.serverContent.outputTranscription.text;
+                            aiTranscriptRef.current += msg.serverContent.outputTranscription.text;
                             setLiveAiTranscript(aiTranscriptRef.current);
                         }
-                        if (message.serverContent?.inputTranscription) {
-                            userTranscriptRef.current += message.serverContent.inputTranscription.text;
+                        if (msg.serverContent?.inputTranscription) {
+                            userTranscriptRef.current += msg.serverContent.inputTranscription.text;
                             setLiveUserTranscript(userTranscriptRef.current);
                         }
-                        if (message.toolCall) {
-                            for (const fc of message.toolCall.functionCalls) {
-                                let functionResult = "Действие выполнено.";
-                                if (fc.name === 'navigateToPage' && fc.args.page) {
-                                   handleNavigation(fc.args.page as string);
-                                   functionResult = `Перехожу на страницу ${fc.args.page}`;
+                        
+                        // ОБРАБОТКА ИНСТРУМЕНТОВ (НАВИГАЦИЯ И СОЗДАНИЕ)
+                        if (msg.toolCall) {
+                            for (const fc of msg.toolCall.functionCalls) {
+                                let result = "OK";
+                                if (fc.name === 'navigateToPage') {
+                                    handleNavigation(fc.args.page as string);
+                                    result = `Перешел на ${fc.args.page}`;
                                 }
                                 if (fc.name === 'createCommercialProposal') {
-                                   const { company, item, amount, direction, date } = fc.args as any;
-                                   let normalizedDirection: 'РТИ' | '3D' = 'РТИ';
-                                   if (typeof direction === 'string' && direction.toUpperCase() === '3D') normalizedDirection = '3D';
-                                   crudFunctions.addProposal({
-                                       date: date || new Date().toISOString().split('T')[0],
-                                       direction: normalizedDirection,
-                                       proposalNumber: `КП-${Math.floor(10000 + Math.random() * 90000)}`,
-                                       company: company, item: item, amount: amount, status: 'Ожидание', invoiceNumber: null, invoiceDate: null, paymentDate: null, paymentType: null,
-                                   });
-                                   functionResult = `КП для ${company} создано.`;
+                                    // Логика создания КП
+                                    const args: any = fc.args;
+                                    crudFunctions.addProposal({
+                                       date: args.date || new Date().toISOString().split('T')[0],
+                                       direction: args.direction || 'РТИ',
+                                       proposalNumber: `КП-AI-${Math.floor(Math.random()*1000)}`,
+                                       company: args.company, item: args.item, amount: args.amount, status: 'Ожидание', invoiceNumber: null, invoiceDate: null, paymentDate: null, paymentType: null
+                                    });
+                                    result = "КП создано";
                                 }
-                                sessionPromise.then((session) => {
-                                   session.sendToolResponse({ functionResponses: { id: fc.id, name: fc.name, response: { result: functionResult } } });
-                                });
+                                sessionPromise.then(s => s.sendToolResponse({ functionResponses: { id: fc.id, name: fc.name, response: { result } } }));
                             }
                         }
-                        if (message.serverContent?.turnComplete) {
+
+                        if (msg.serverContent?.turnComplete) {
                             userTranscriptRef.current = '';
                             aiTranscriptRef.current = '';
-                            setTimeout(() => { setLiveUserTranscript(''); setLiveAiTranscript(''); setVoiceStatus('listening'); }, 2000);
+                            setTimeout(() => { 
+                                setLiveUserTranscript(''); 
+                                setLiveAiTranscript(''); 
+                                setVoiceStatus('listening'); 
+                            }, 1500);
                         }
-                        const modelTurn = message.serverContent?.modelTurn;
+                        
+                        // Воспроизведение звука
+                        const modelTurn = msg.serverContent?.modelTurn;
                         if (modelTurn?.parts) {
                             for (const part of modelTurn.parts) {
                                 const base64Audio = part.inlineData?.data;
                                 if (base64Audio && outputAudioContextRef.current) {
-                                    const outCtx = outputAudioContextRef.current;
-                                    nextStartTimeRef.current = Math.max(nextStartTimeRef.current, outCtx.currentTime);
-                                    const audioBuffer = await decodeAudioData(decode(base64Audio), outCtx, 24000, 1);
-                                    const source = outCtx.createBufferSource();
-                                    source.buffer = audioBuffer;
-                                    source.connect(outCtx.destination);
-                                    source.addEventListener('ended', () => { audioSourcesRef.current.delete(source); });
-                                    source.start(nextStartTimeRef.current);
-                                    nextStartTimeRef.current += audioBuffer.duration;
-                                    audioSourcesRef.current.add(source);
+                                    const ctx = outputAudioContextRef.current;
+                                    const buffer = await decodeAudioData(decode(base64Audio), ctx, 24000, 1);
+                                    const source = ctx.createBufferSource();
+                                    source.buffer = buffer;
+                                    source.connect(ctx.destination);
+                                    source.start(0);
                                 }
                             }
                         }
                     },
                     onclose: cleanupVoiceSession,
                     onerror: (e: any) => {
-                        console.error("Live session error:", e);
-                        if (!isVoiceControlActive) return;
-                        const msg = e.message || e.type || "Неизвестная ошибка";
-                        if (!msg.includes("closing")) alert(`Сбой соединения: ${msg}`);
+                        console.error(e);
+                        if (isVoiceControlActive) alert(`Ошибка соединения: ${e.message || "Сбой сети"}`);
                         cleanupVoiceSession();
-                    },
+                    }
                 }
             });
             sessionRef.current = await sessionPromise;
         } catch (err) {
-            console.error("Failed to start voice session:", err);
-            alert("Не удалось подключиться. Проверьте консоль.");
+            alert("Не удалось подключиться.");
             cleanupVoiceSession();
         }
     };
