@@ -2,7 +2,18 @@ import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { v4 as uuidv4 } from 'uuid';
 import { GoogleGenAI, LiveSession, LiveServerMessage, Modality, Blob } from "@google/genai";
-import { getAIAssistantResponse, analyzeReportImage, analyzeProposalsImage, analyzeCampaignsImage, createOtherReportFunctionDeclaration, updateOtherReportKpiFunctionDeclaration, createCommercialProposalFunctionDeclaration, updateCommercialProposalFunctionDeclaration, navigationFunctionDeclaration } from '../services/geminiService';
+import { 
+    getAIAssistantResponse, 
+    analyzeReportImage, 
+    analyzeProposalsImage, 
+    analyzeCampaignsImage, 
+    // Импортируем определения функций для локальной голосовой сессии
+    createOtherReportFunctionDeclaration, 
+    updateOtherReportKpiFunctionDeclaration, 
+    createCommercialProposalFunctionDeclaration, 
+    updateCommercialProposalFunctionDeclaration,
+    navigationFunctionDeclaration 
+} from '../services/geminiService';
 import { UserData, Report, CommercialProposal, AdCampaign, OtherReport, OtherReportKpi } from '../types';
 import { fileToBase64, decode, decodeAudioData, encode } from '../utils';
 
@@ -14,12 +25,13 @@ interface Message {
     sender: 'user' | 'ai';
 }
 
-// --- ИСПРАВЛЕННЫЙ ГЕНЕРАТОР КОНТЕКСТА (СЖАТЫЙ И УМНЫЙ) ---
+// --- ГЕНЕРАТОР КОНТЕКСТА (СЖАТЫЙ И ОПТИМИЗИРОВАННЫЙ) ---
+// Точно такой же, как в App.tsx, чтобы не было ошибок переполнения
 const generateContext = (data: UserData) => {
     const today = new Date().toLocaleDateString('ru-RU');
     
-    // Сжимаем данные, чтобы не ломать соединение
-    const reportStr = data.reports.map(r => `[ОТЧЕТ ${r.name}]: Продажи ${r.metrics.sales}, Лиды ${r.metrics.leads}, Бюджет ${r.metrics.budget}, КП ${r.metrics.proposals}`).join('; ');
+    // Сжимаем данные в текст
+    const reportStr = data.reports.map(r => `[ОТЧЕТ ${r.name}]: Продажи ${r.metrics.sales}, Лиды ${r.metrics.leads}, Бюджет ${r.metrics.budget}`).join('; ');
     const propStr = data.proposals.map(p => `[КП]: ${p.company || '?'}, ${p.item}, ${p.amount}тг, Статус: ${p.status}, Дата ${p.date}`).join('; ');
     const campStr = data.campaigns.map(c => `[РЕКЛАМА]: ${c.name}, Статус ${c.status}, Расход ${c.spend}, Конверсии ${c.conversions}`).join('; ');
     const payStr = data.payments.map(p => `[ПЛАТЕЖ]: ${p.serviceName}, ${p.amount} ${p.currency}, Дата ${p.nextPaymentDate}`).join('; ');
@@ -666,9 +678,7 @@ const AIAssistantPage: React.FC<AIAssistantPageProps> = ({
                             }
                         }
                     },
-                    onclose: () => {
-                        cleanupSession();
-                    },
+                    onclose: cleanupVoiceSession,
                     onerror: (e: ErrorEvent) => {
                         console.error("Live session error:", e);
                         cleanupSession();
@@ -926,7 +936,10 @@ const AIAssistantPage: React.FC<AIAssistantPageProps> = ({
                             <div key={msg.id} className={`flex items-start gap-2.5 ${msg.sender === 'user' ? 'justify-end' : 'justify-start'}`}>
                                 {msg.sender === 'ai' && (
                                     <div className="w-8 h-8 rounded-full bg-gradient-to-br from-blue-100 to-blue-200 dark:from-blue-900 dark:to-slate-800 flex items-center justify-center flex-shrink-0 text-blue-600 dark:text-blue-400">
-                                        <span className="text-xs font-bold">AI</span>
+                                        <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+                                            <path strokeLinecap="round" strokeLinejoin="round" d="M9.813 15.904L9 18.75l-.813-2.846a4.5 4.5 0 00-3.09-3.09L2.25 12l2.846-.813a4.5 4.5 0 003.09-3.09L9 5.25l.813 2.846a4.5 4.5 0 003.09 3.09L15.75 12l-2.846.813a4.5 4.5 0 00-3.09 3.09z" />
+                                            <path strokeLinecap="round" strokeLinejoin="round" d="M18.258 8.715L18 9.75l-.258-1.035a3.375 3.375 0 00-2.456-2.456L14.25 6l1.036-.259a3.375 3.375 0 002.456-2.456L18 2.25l.258 1.035a3.375 3.375 0 002.456 2.456L21.75 6l-1.035.259a3.375 3.375 0 00-2.456 2.456z" />
+                                        </svg>
                                     </div>
                                 )}
                                 <div className={`px-4 py-2 rounded-2xl max-w-lg shadow ${msg.sender === 'user' ? 'bg-blue-600 text-white rounded-br-none' : 'bg-white dark:bg-slate-700 text-slate-800 dark:text-slate-200 rounded-bl-none'}`}>
@@ -934,26 +947,69 @@ const AIAssistantPage: React.FC<AIAssistantPageProps> = ({
                                 </div>
                             </div>
                         ))}
-                        {isLoading && <div className="text-slate-400 text-sm p-4">Lumi печатает...</div>}
+                        {isLoading && (
+                            <div className="flex items-start gap-3 justify-start">
+                                <div className="w-8 h-8 rounded-full bg-gradient-to-br from-blue-100 to-blue-200 dark:from-blue-900 dark:to-slate-800 flex items-center justify-center flex-shrink-0 text-blue-600 dark:text-blue-400">
+                                    <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}><path strokeLinecap="round" strokeLinejoin="round" d="M9.813 15.904L9 18.75l-.813-2.846a4.5 4.5 0 00-3.09-3.09L2.25 12l2.846-.813a4.5 4.5 0 003.09-3.09L9 5.25l.813 2.846a4.5 4.5 0 003.09 3.09L15.75 12l-2.846.813a4.5 4.5 0 00-3.09 3.09z" /><path strokeLinecap="round" strokeLinejoin="round" d="M18.258 8.715L18 9.75l-.258-1.035a3.375 3.375 0 00-2.456-2.456L14.25 6l1.036-.259a3.375 3.375 0 002.456-2.456L18 2.25l.258 1.035a3.375 3.375 0 002.456 2.456L21.75 6l-1.035.259a3.375 3.375 0 00-2.456 2.456z" /></svg>
+                                </div>
+                                <div className="px-4 py-3 rounded-2xl max-w-lg bg-white dark:bg-slate-700 text-slate-800 dark:text-slate-200 rounded-bl-none">
+                                    <div className="flex items-center space-x-1">
+                                        <div className="w-2 h-2 bg-slate-400 rounded-full animate-bounce [animation-delay:-0.3s]"></div>
+                                        <div className="w-2 h-2 bg-slate-400 rounded-full animate-bounce [animation-delay:-0.15s]"></div>
+                                        <div className="w-2 h-2 bg-slate-400 rounded-full animate-bounce"></div>
+                                    </div>
+                                </div>
+                            </div>
+                        )}
+                        {isSessionActive && (
+                            <div className="text-sm p-2 bg-gray-100 dark:bg-slate-800 rounded-lg">
+                                {liveUserTranscript && <p><span className="font-semibold">Вы:</span> {liveUserTranscript}</p>}
+                                {liveAiTranscript && <p><span className="font-semibold">Lumi:</span> {liveAiTranscript}</p>}
+                            </div>
+                        )}
                         <div ref={messagesEndRef} />
                     </div>
                 )}
             </div>
             
             <div className="relative">
+                 {isSessionActive && (
+                     <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 px-3 py-1 bg-black/70 text-white text-sm rounded-full whitespace-nowrap">
+                        {getStatusText()}
+                     </div>
+                )}
+                {error && <p className="text-center text-red-500 text-sm mb-2">{error}</p>}
+
                 <div className="bg-white dark:bg-slate-800 rounded-xl p-2 flex items-center shadow-lg">
                     <input type="file" ref={fileInputRef} onChange={handleFileSelected} className="hidden" accept="image/*,application/pdf" />
-                    <button onClick={handleAttachmentClick} className="p-2 text-slate-500 hover:text-blue-600 rounded-lg">📎</button>
+                    <button onClick={handleAttachmentClick} title="Прикрепить файл" className="p-2 text-slate-500 hover:text-blue-600 rounded-lg hover:bg-gray-100 dark:hover:bg-slate-700 transition-colors" disabled={isSessionActive}>
+                        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-6 h-6"><path strokeLinecap="round" strokeLinejoin="round" d="m18.375 12.739-7.693 7.693a4.5 4.5 0 0 1-6.364-6.364l10.94-10.94A3 3 0 1 1 19.5 7.372L8.552 18.32m.009-.01-.01.01m5.699-9.941-7.81 7.81a1.5 1.5 0 0 0 2.122 2.122l7.81-7.81" /></svg>
+                    </button>
+                    <button onClick={handleToggleVoiceSession} title="Голосовой ввод" className={`p-2 rounded-full transition-colors ${isSessionActive ? 'text-red-500 bg-red-100 dark:bg-red-900/50 animate-pulse' : 'text-slate-500 hover:text-blue-600 dark:hover:text-blue-400 hover:bg-gray-100 dark:hover:bg-slate-700'}`}>
+                        {isSessionActive ? (
+                            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-6 h-6"><path strokeLinecap="round" strokeLinejoin="round" d="M5.25 7.5A2.25 2.25 0 0 1 7.5 5.25h9a2.25 2.25 0 0 1 2.25 2.25v9a2.25 2.25 0 0 1-2.25 2.25h-9a2.25 2.25 0 0 1-2.25-2.25v-9Z" /></svg>
+                        ) : (
+                            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-6 h-6"><path strokeLinecap="round" strokeLinejoin="round" d="M12 18.75a6 6 0 0 0 6-6v-1.5m-6 7.5a6 6 0 0 1-6-6v-1.5m12 0v-1.5a6 6 0 0 0-6-6v0a6 6 0 0 0-6 6v1.5m6 7.5v3.75m-3.75-3.75h7.5" /></svg>
+                        )}
+                    </button>
                     <input
                         type="text"
                         value={input}
                         onChange={(e) => setInput(e.target.value)}
                         onKeyPress={(e) => e.key === 'Enter' && handleSend()}
-                        placeholder="Спросите Lumi о чем угодно..."
-                        className="flex-grow bg-transparent text-slate-800 dark:text-slate-200 focus:outline-none px-3"
-                        disabled={isLoading}
+                        placeholder="Спросите Lumi о данных или попросите помочь..."
+                        className="flex-grow bg-transparent text-slate-800 dark:text-slate-200 placeholder-slate-500 dark:placeholder-slate-400 focus:outline-none px-3"
+                        disabled={isLoading || isSessionActive}
                     />
-                    <button onClick={() => handleSend()} disabled={isLoading || input.trim() === ''} className="bg-blue-600 hover:bg-blue-700 text-white rounded-lg p-2">➤</button>
+                    <button
+                        onClick={() => handleSend()}
+                        disabled={isLoading || input.trim() === '' || isSessionActive}
+                        className="bg-blue-600 hover:bg-blue-700 disabled:bg-slate-400 disabled:cursor-not-allowed text-white rounded-lg p-2 transition-colors"
+                    >
+                       <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-6 h-6">
+                         <path strokeLinecap="round" strokeLinejoin="round" d="M6 12 3.269 3.125A59.769 59.769 0 0 1 21.485 12 59.768 59.768 0 0 1 3.27 20.875L5.999 12Zm0 0h7.5" />
+                       </svg>
+                    </button>
                 </div>
             </div>
         </div>
