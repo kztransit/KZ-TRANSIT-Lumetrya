@@ -178,7 +178,6 @@ const App: React.FC = () => {
     const navigate = useNavigate();
     const handleNavigation = (page: string) => { navigate(page); };
 
-    // Функция остановки всего (Safety Stop)
     const stopEverything = useCallback(() => {
         if (scriptProcessorRef.current) {
             scriptProcessorRef.current.onaudioprocess = null;
@@ -208,30 +207,17 @@ const App: React.FC = () => {
 
     useEffect(() => { return () => stopEverything(); }, [stopEverything]);
 
-    // --- ИСПРАВЛЕННАЯ ГЕНЕРАЦИЯ КОНТЕКСТА (ФИЛЬТРАЦИЯ ДАННЫХ) ---
+    // ГЕНЕРАЦИЯ КОНТЕКСТА (С фильтрацией токенов)
     const generateContext = (data: UserData) => {
         const today = new Date().toLocaleDateString('ru-RU');
         
-        // ОПТИМИЗАЦИЯ: Берем только последние данные, чтобы не превысить лимит токенов (131072)
-        // и ОБЯЗАТЕЛЬНО убираем содержимое файлов, если оно есть.
+        // ОПТИМИЗАЦИЯ ТОКЕНОВ
         const optimizedDb = {
-            // Берем последние 5 отчетов
-            reports: data.reports.slice(0, 5).map(r => ({
-                name: r.name, metrics: r.metrics
-            })),
-            // Берем последние 20 КП
-            proposals: data.proposals.slice(0, 20).map(p => ({
-                company: p.company, item: p.item, amount: p.amount, status: p.status, direction: p.direction
-            })),
-            // Кампании
-            campaigns: data.campaigns.slice(0, 10).map(c => ({
-                name: c.name, status: c.status, spend: c.spend
-            })),
-            // Файлы: ТОЛЬКО ИМЕНА. Никакого содержимого!
+            reports: data.reports.slice(0, 5).map(r => ({ name: r.name, metrics: r.metrics })),
+            proposals: data.proposals.slice(0, 20).map(p => ({ company: p.company, item: p.item, amount: p.amount, status: p.status, direction: p.direction })),
+            campaigns: data.campaigns.slice(0, 10).map(c => ({ name: c.name, status: c.status, spend: c.spend })),
             storage: data.files.map(f => f.name), 
-            // Ссылки
             links: data.links,
-            // Платежи (последние 10)
             payments: data.payments.slice(0, 10)
         };
 
@@ -265,7 +251,6 @@ const App: React.FC = () => {
             nextStartTimeRef.current = 0;
 
             const ai = new GoogleGenAI({ apiKey: apiKey });
-            // Генерируем ОБЛЕГЧЕННЫЙ контекст
             const fullContext = generateContext(userData);
 
             const toolsArray: any[] = [
@@ -295,7 +280,14 @@ const App: React.FC = () => {
                 model: 'models/gemini-2.0-flash-exp',
                 config: {
                     responseModalities: [Modality.AUDIO],
-                    speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName: 'Puck' } } },
+                    speechConfig: { 
+                        voiceConfig: { 
+                            prebuiltVoiceConfig: { 
+                                // ИЗМЕНЕНИЕ: 'Aoede' - это женский профессиональный голос
+                                voiceName: 'Aoede' 
+                            } 
+                        } 
+                    },
                     systemInstruction: fullContext,
                     tools: toolsArray,
                 },
@@ -387,17 +379,11 @@ const App: React.FC = () => {
                     },
                     onclose: (e: any) => {
                         console.log("Session closed", e);
-                        if (isSessionActive) {
-                            isSessionActive = false;
-                            stopEverything();
-                        }
+                        if (isSessionActive) { isSessionActive = false; stopEverything(); }
                     },
                     onerror: (e: any) => {
                         console.error("Session error", e);
-                        if (isSessionActive) {
-                            isSessionActive = false;
-                            stopEverything();
-                        }
+                        if (isSessionActive) { isSessionActive = false; stopEverything(); }
                     }
                 }
             });
