@@ -2,7 +2,7 @@ import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { v4 as uuidv4 } from 'uuid';
 import { GoogleGenAI, LiveSession, LiveServerMessage, Modality, Blob } from "@google/genai";
-import { getAIAssistantResponse, analyzeReportImage, analyzeProposalsImage, analyzeCampaignsImage, createOtherReportFunctionDeclaration, updateOtherReportKpiFunctionDeclaration, createCommercialProposalFunctionDeclaration, updateCommercialProposalFunctionDeclaration } from '../services/geminiService';
+import { getAIAssistantResponse, analyzeReportImage, analyzeProposalsImage, analyzeCampaignsImage, createOtherReportFunctionDeclaration, updateOtherReportKpiFunctionDeclaration, createCommercialProposalFunctionDeclaration, updateCommercialProposalFunctionDeclaration, navigationFunctionDeclaration } from '../services/geminiService';
 import { UserData, Report, CommercialProposal, AdCampaign, OtherReport, OtherReportKpi } from '../types';
 import { fileToBase64, decode, decodeAudioData, encode } from '../utils';
 
@@ -14,35 +14,55 @@ interface Message {
     sender: 'user' | 'ai';
 }
 
-// --- ВСПОМОГАТЕЛЬНАЯ ФУНКЦИЯ ДЛЯ КОНТЕКСТА ---
-// Собираем все данные в текст, чтобы AI их видел
+// --- ИСПРАВЛЕННЫЙ ГЕНЕРАТОР КОНТЕКСТА (СЖАТЫЙ И УМНЫЙ) ---
 const generateContext = (data: UserData) => {
-    return `
-    СИСТЕМНАЯ ИНСТРУКЦИЯ: ${data.companyProfile.aiSystemInstruction}
-
-    ВНИМАНИЕ! НИЖЕ ПРЕДСТАВЛЕНЫ АКТУАЛЬНЫЕ ДАННЫЕ КОМПАНИИ В ФОРМАТЕ JSON.
-    ИСПОЛЬЗУЙ ЭТИ ДАННЫЕ ДЛЯ ОТВЕТОВ НА ВОПРОСЫ ПОЛЬЗОВАТЕЛЯ.
+    const today = new Date().toLocaleDateString('ru-RU');
     
-    1. ПРОФИЛЬ КОМПАНИИ:
-    Название: ${data.companyProfile.companyName}
-    Детали: ${JSON.stringify(data.companyProfile.details)}
+    // Сжимаем данные, чтобы не ломать соединение
+    const reportStr = data.reports.map(r => `[ОТЧЕТ ${r.name}]: Продажи ${r.metrics.sales}, Лиды ${r.metrics.leads}, Бюджет ${r.metrics.budget}, КП ${r.metrics.proposals}`).join('; ');
+    const propStr = data.proposals.map(p => `[КП]: ${p.company || '?'}, ${p.item}, ${p.amount}тг, Статус: ${p.status}, Дата ${p.date}`).join('; ');
+    const campStr = data.campaigns.map(c => `[РЕКЛАМА]: ${c.name}, Статус ${c.status}, Расход ${c.spend}, Конверсии ${c.conversions}`).join('; ');
+    const payStr = data.payments.map(p => `[ПЛАТЕЖ]: ${p.serviceName}, ${p.amount} ${p.currency}, Дата ${p.nextPaymentDate}`).join('; ');
+    const linksStr = data.links.map(l => `[ССЫЛКА]: ${l.url} (${l.comment})`).join('; ');
+    const empStr = data.companyProfile.employees.map(e => `${e.name} (${e.position})`).join(', ');
 
-    2. ФИНАНСОВЫЕ ОТЧЕТЫ (Reports):
-    ${JSON.stringify(data.reports)}
+    return `
+    СЕГОДНЯ: ${today}
+    ТВОЕ ИМЯ: Люми.
+    РОЛЬ: Старший бизнес-аналитик, оператор системы, инженер и копирайтер компании ${data.companyProfile.companyName}.
+    
+    === ТВОИ ВОЗМОЖНОСТИ ===
+    
+    1. 🌐 ИНТЕРНЕТ-ПОИСК (Google):
+       - Если вопрос требует внешних данных (новости, курсы, законы, ГОСТы) — ИСПОЛЬЗУЙ [googleSearch].
+       - Ты инженер: консультируй по РТИ и 3D.
 
-    3. КОММЕРЧЕСКИЕ ПРЕДЛОЖЕНИЯ (Proposals):
-    ${JSON.stringify(data.proposals)}
+    2. 🧭 НАВИГАЦИЯ ПО САЙТУ:
+       - Если просят открыть раздел — используй navigateToPage.
+       - Карты: /dashboard, /reports, /proposals, /campaigns, /payments, /storage, /settings.
 
-    4. РЕКЛАМНЫЕ КАМПАНИИ (Campaigns):
-    ${JSON.stringify(data.campaigns)}
+    3. 📝 СОЗДАНИЕ КП:
+       - Умеешь создавать КП (createCommercialProposal).
 
-    5. ПЛАТЕЖИ (Payments):
-    ${JSON.stringify(data.payments)}
+    4. 📊 АНАЛИЗ ДАННЫХ:
+       - Ты видишь ВСЮ сжатую базу (ниже). Анализируй, сравнивай, ищи ошибки.
 
-    6. ДРУГИЕ ОТЧЕТЫ:
-    ${JSON.stringify(data.otherReports)}
+    5. ✍️ ТЕКСТЫ:
+       - Пиши письма, переводи, редактируй.
 
-    Если пользователь спрашивает о цифрах, ищи их в этих данных.
+    ЯЗЫК: РУССКИЙ. Цифры словами.
+
+    === ПОЛНАЯ БАЗА ДАННЫХ ===
+    ПРОФИЛЬ: ${JSON.stringify(data.companyProfile.details)}
+    СОТРУДНИКИ: ${empStr}
+    ОТЧЕТЫ: ${reportStr || "Нет данных"}
+    КП: ${propStr || "Нет данных"}
+    РЕКЛАМА: ${campStr || "Нет данных"}
+    ПЛАТЕЖИ: ${payStr || "Нет данных"}
+    ССЫЛКИ: ${linksStr || "Нет данных"}
+    ПРОЧЕЕ: ${JSON.stringify(data.otherReports)}
+    
+    ИНСТРУКЦИЯ ПОЛЬЗОВАТЕЛЯ: ${data.companyProfile.aiSystemInstruction}
     `;
 };
 
@@ -307,10 +327,10 @@ const ConfirmCampaignsImportModal: React.FC<{
 
 const WelcomeScreen: React.FC<{ onPromptClick: (prompt: string) => void }> = ({ onPromptClick }) => {
     const prompts = [
-        "Чем отличается FDM от SLA 3D-печати?",
-        "Какой EPDM уплотнитель лучше для уличных условий?",
-        "Переведи на английский: 'счет на оплату'",
-        "Какие рекламные кампании самые эффективные?",
+        "Найди в интернете курс тенге к доллару",
+        "Какие ГОСТы есть на техпластину ТМКЩ?",
+        "Проанализируй наши продажи за прошлый месяц",
+        "Создай КП для компании Test на 100000 тенге",
     ];
 
     return (
@@ -322,15 +342,11 @@ const WelcomeScreen: React.FC<{ onPromptClick: (prompt: string) => void }> = ({ 
                 </svg>
                 <h1 className="text-5xl font-bold text-slate-800 dark:text-slate-100">Lumi</h1>
             </div>
-            <p className="text-slate-500 dark:text-slate-400 text-lg">Здравствуйте! Чем я могу помочь вам сегодня?</p>
+            <p className="text-slate-500 dark:text-slate-400 text-lg">Я вижу ваши данные и имею доступ в интернет. Чем помочь?</p>
             
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mt-8 w-full max-w-2xl">
                 {prompts.map((prompt, index) => (
-                    <button 
-                        key={index} 
-                        onClick={() => onPromptClick(prompt)}
-                        className="p-4 bg-white dark:bg-slate-800 hover:bg-blue-100/50 dark:hover:bg-blue-500/10 rounded-lg text-left text-slate-700 dark:text-slate-200 hover:text-blue-800 dark:hover:text-blue-400 transition-colors border border-gray-200/80 dark:border-slate-700/80 shadow-sm"
-                    >
+                    <button key={index} onClick={() => onPromptClick(prompt)} className="p-4 bg-white dark:bg-slate-800 hover:bg-blue-100/50 dark:hover:bg-blue-500/10 rounded-lg text-left text-slate-700 dark:text-slate-200 hover:text-blue-800 dark:hover:text-blue-400 transition-colors border border-gray-200/80 dark:border-slate-700/80 shadow-sm">
                         <p className="font-medium text-sm">{prompt}</p>
                     </button>
                 ))}
@@ -338,7 +354,6 @@ const WelcomeScreen: React.FC<{ onPromptClick: (prompt: string) => void }> = ({ 
         </div>
     );
 };
-
 
 interface AIAssistantPageProps {
     userData: UserData;
@@ -352,7 +367,6 @@ interface AIAssistantPageProps {
     isGlobalVoiceActive: boolean;
     onDisableGlobalVoice: () => void;
 }
-
 
 const AIAssistantPage: React.FC<AIAssistantPageProps> = ({ 
     userData, addReport, addMultipleProposals, addMultipleCampaigns, 
@@ -474,23 +488,26 @@ const AIAssistantPage: React.FC<AIAssistantPageProps> = ({
         try {
             const ai = new GoogleGenAI({ apiKey: apiKey });
             
-            // --- ИСПРАВЛЕНИЕ КОНТЕКСТА (Чтобы AI видел данные) ---
+            // --- ИСПРАВЛЕНИЕ КОНТЕКСТА (Сжатый) ---
             const fullContext = generateContext(userData);
 
             const sessionPromise = ai.live.connect({
                 // --- ИСПРАВЛЕНИЕ МОДЕЛИ ---
-                model: 'gemini-2.0-flash-exp',
+                model: 'models/gemini-2.0-flash-exp',
                 config: {
                     responseModalities: [Modality.AUDIO],
                     speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName: 'Zephyr' } } },
-                    systemInstruction: fullContext, // <-- Передаем полный контекст
+                    systemInstruction: fullContext, // <-- Передаем сжатый контекст
                     inputAudioTranscription: {},
                     outputAudioTranscription: {},
-                    tools: [{functionDeclarations: [
+                    tools: [
+                        { googleSearch: {} },
+                        {functionDeclarations: [
                         createOtherReportFunctionDeclaration,
                         updateOtherReportKpiFunctionDeclaration,
                         createCommercialProposalFunctionDeclaration,
                         updateCommercialProposalFunctionDeclaration,
+                        navigationFunctionDeclaration // Добавил навигацию
                     ]}],
                 },
                 callbacks: {
@@ -516,7 +533,7 @@ const AIAssistantPage: React.FC<AIAssistantPageProps> = ({
                                 mimeType: 'audio/pcm;rate=16000',
                             };
                             sessionPromise.then((session) => {
-                                session.sendRealtimeInput({ media: pcmBlob });
+                                try { session.sendRealtimeInput({ media: pcmBlob }); } catch (e) {}
                             });
                         };
                         mediaStreamSourceRef.current.connect(scriptProcessorRef.current);
@@ -542,6 +559,10 @@ const AIAssistantPage: React.FC<AIAssistantPageProps> = ({
                                 let functionResult = "Действие выполнено.";
                         
                                 switch(fc.name) {
+                                    case 'navigateToPage':
+                                        navigate(fc.args.page as string);
+                                        functionResult = `Переход на страницу ${fc.args.page} выполнен.`;
+                                        break;
                                     case 'createOtherReport': {
                                         const args = fc.args as any;
                                         const kpis = (args.kpis || []).map((kpi: any) => ({ ...kpi, id: uuidv4() }));
@@ -650,7 +671,6 @@ const AIAssistantPage: React.FC<AIAssistantPageProps> = ({
                     },
                     onerror: (e: ErrorEvent) => {
                         console.error("Live session error:", e);
-                        setError('Произошла ошибка сессии. Попробуйте снова.');
                         cleanupSession();
                     },
                 }
@@ -675,15 +695,18 @@ const AIAssistantPage: React.FC<AIAssistantPageProps> = ({
         setIsLoading(true);
         
         try {
-            // --- ИСПРАВЛЕНИЕ: Передаем ПОЛНЫЙ контекст данных в текстовый чат ---
+            // --- ИСПРАВЛЕНИЕ: Передаем СЖАТЫЙ контекст данных ---
             const fullContext = generateContext(userData);
+            
+            // ОТПРАВЛЯЕМ В СЕРВИС (С ПОДДЕРЖКОЙ GOOGLE SEARCH)
             const { text, functionCall } = await getAIAssistantResponse(textToSend, userData, fullContext);
             
             if (functionCall) {
                  let confirmationMessage = text;
                  switch(functionCall.name) {
                     case 'navigateToPage':
-                        addMessage({ text: `Я не могу выполнять навигацию в этом чате. Пожалуйста, используйте глобальный голосовой ассистент (иконка микрофона в боковой панели) для перехода по разделам.`, sender: 'ai' });
+                        navigate(functionCall.args.page as string);
+                        addMessage({ text: `Перехожу на страницу: ${functionCall.args.page}`, sender: 'ai' });
                         break;
                     case 'createOtherReport':
                         const kpis = (functionCall.args.kpis || []).map((kpi: any) => ({ ...kpi, id: uuidv4() }));
@@ -763,7 +786,6 @@ const AIAssistantPage: React.FC<AIAssistantPageProps> = ({
             setIsLoading(false);
         }
     };
-
 
     const handleAttachmentClick = () => fileInputRef.current?.click();
 
@@ -904,10 +926,7 @@ const AIAssistantPage: React.FC<AIAssistantPageProps> = ({
                             <div key={msg.id} className={`flex items-start gap-2.5 ${msg.sender === 'user' ? 'justify-end' : 'justify-start'}`}>
                                 {msg.sender === 'ai' && (
                                     <div className="w-8 h-8 rounded-full bg-gradient-to-br from-blue-100 to-blue-200 dark:from-blue-900 dark:to-slate-800 flex items-center justify-center flex-shrink-0 text-blue-600 dark:text-blue-400">
-                                        <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
-                                            <path strokeLinecap="round" strokeLinejoin="round" d="M9.813 15.904L9 18.75l-.813-2.846a4.5 4.5 0 00-3.09-3.09L2.25 12l2.846-.813a4.5 4.5 0 003.09-3.09L9 5.25l.813 2.846a4.5 4.5 0 003.09 3.09L15.75 12l-2.846.813a4.5 4.5 0 00-3.09 3.09z" />
-                                            <path strokeLinecap="round" strokeLinejoin="round" d="M18.258 8.715L18 9.75l-.258-1.035a3.375 3.375 0 00-2.456-2.456L14.25 6l1.036-.259a3.375 3.375 0 002.456-2.456L18 2.25l.258 1.035a3.375 3.375 0 002.456 2.456L21.75 6l-1.035.259a3.375 3.375 0 00-2.456 2.456z" />
-                                        </svg>
+                                        <span className="text-xs font-bold">AI</span>
                                     </div>
                                 )}
                                 <div className={`px-4 py-2 rounded-2xl max-w-lg shadow ${msg.sender === 'user' ? 'bg-blue-600 text-white rounded-br-none' : 'bg-white dark:bg-slate-700 text-slate-800 dark:text-slate-200 rounded-bl-none'}`}>
@@ -915,69 +934,26 @@ const AIAssistantPage: React.FC<AIAssistantPageProps> = ({
                                 </div>
                             </div>
                         ))}
-                        {isLoading && (
-                            <div className="flex items-start gap-3 justify-start">
-                                <div className="w-8 h-8 rounded-full bg-gradient-to-br from-blue-100 to-blue-200 dark:from-blue-900 dark:to-slate-800 flex items-center justify-center flex-shrink-0 text-blue-600 dark:text-blue-400">
-                                    <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}><path strokeLinecap="round" strokeLinejoin="round" d="M9.813 15.904L9 18.75l-.813-2.846a4.5 4.5 0 00-3.09-3.09L2.25 12l2.846-.813a4.5 4.5 0 003.09-3.09L9 5.25l.813 2.846a4.5 4.5 0 003.09 3.09L15.75 12l-2.846.813a4.5 4.5 0 00-3.09 3.09z" /><path strokeLinecap="round" strokeLinejoin="round" d="M18.258 8.715L18 9.75l-.258-1.035a3.375 3.375 0 00-2.456-2.456L14.25 6l1.036-.259a3.375 3.375 0 002.456-2.456L18 2.25l.258 1.035a3.375 3.375 0 002.456 2.456L21.75 6l-1.035.259a3.375 3.375 0 00-2.456 2.456z" /></svg>
-                                </div>
-                                <div className="px-4 py-3 rounded-2xl max-w-lg bg-white dark:bg-slate-700 text-slate-800 dark:text-slate-200 rounded-bl-none">
-                                    <div className="flex items-center space-x-1">
-                                        <div className="w-2 h-2 bg-slate-400 rounded-full animate-bounce [animation-delay:-0.3s]"></div>
-                                        <div className="w-2 h-2 bg-slate-400 rounded-full animate-bounce [animation-delay:-0.15s]"></div>
-                                        <div className="w-2 h-2 bg-slate-400 rounded-full animate-bounce"></div>
-                                    </div>
-                                </div>
-                            </div>
-                        )}
-                        {isSessionActive && (
-                            <div className="text-sm p-2 bg-gray-100 dark:bg-slate-800 rounded-lg">
-                                {liveUserTranscript && <p><span className="font-semibold">Вы:</span> {liveUserTranscript}</p>}
-                                {liveAiTranscript && <p><span className="font-semibold">Lumi:</span> {liveAiTranscript}</p>}
-                            </div>
-                        )}
+                        {isLoading && <div className="text-slate-400 text-sm p-4">Lumi печатает...</div>}
                         <div ref={messagesEndRef} />
                     </div>
                 )}
             </div>
             
             <div className="relative">
-                 {isSessionActive && (
-                     <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 px-3 py-1 bg-black/70 text-white text-sm rounded-full whitespace-nowrap">
-                        {getStatusText()}
-                     </div>
-                )}
-                {error && <p className="text-center text-red-500 text-sm mb-2">{error}</p>}
-
                 <div className="bg-white dark:bg-slate-800 rounded-xl p-2 flex items-center shadow-lg">
                     <input type="file" ref={fileInputRef} onChange={handleFileSelected} className="hidden" accept="image/*,application/pdf" />
-                    <button onClick={handleAttachmentClick} title="Прикрепить файл" className="p-2 text-slate-500 hover:text-blue-600 rounded-lg hover:bg-gray-100 dark:hover:bg-slate-700 transition-colors" disabled={isSessionActive}>
-                        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-6 h-6"><path strokeLinecap="round" strokeLinejoin="round" d="m18.375 12.739-7.693 7.693a4.5 4.5 0 0 1-6.364-6.364l10.94-10.94A3 3 0 1 1 19.5 7.372L8.552 18.32m.009-.01-.01.01m5.699-9.941-7.81 7.81a1.5 1.5 0 0 0 2.122 2.122l7.81-7.81" /></svg>
-                    </button>
-                    <button onClick={handleToggleVoiceSession} title="Голосовой ввод" className={`p-2 rounded-full transition-colors ${isSessionActive ? 'text-red-500 bg-red-100 dark:bg-red-900/50 animate-pulse' : 'text-slate-500 hover:text-blue-600 dark:hover:text-blue-400 hover:bg-gray-100 dark:hover:bg-slate-700'}`}>
-                        {isSessionActive ? (
-                            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-6 h-6"><path strokeLinecap="round" strokeLinejoin="round" d="M5.25 7.5A2.25 2.25 0 0 1 7.5 5.25h9a2.25 2.25 0 0 1 2.25 2.25v9a2.25 2.25 0 0 1-2.25 2.25h-9a2.25 2.25 0 0 1-2.25-2.25v-9Z" /></svg>
-                        ) : (
-                            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-6 h-6"><path strokeLinecap="round" strokeLinejoin="round" d="M12 18.75a6 6 0 0 0 6-6v-1.5m-6 7.5a6 6 0 0 1-6-6v-1.5m12 0v-1.5a6 6 0 0 0-6-6v0a6 6 0 0 0-6 6v1.5m6 7.5v3.75m-3.75-3.75h7.5" /></svg>
-                        )}
-                    </button>
+                    <button onClick={handleAttachmentClick} className="p-2 text-slate-500 hover:text-blue-600 rounded-lg">📎</button>
                     <input
                         type="text"
                         value={input}
                         onChange={(e) => setInput(e.target.value)}
                         onKeyPress={(e) => e.key === 'Enter' && handleSend()}
-                        placeholder="Спросите Lumi о данных или попросите помочь..."
-                        className="flex-grow bg-transparent text-slate-800 dark:text-slate-200 placeholder-slate-500 dark:placeholder-slate-400 focus:outline-none px-3"
-                        disabled={isLoading || isSessionActive}
+                        placeholder="Спросите Lumi о чем угодно..."
+                        className="flex-grow bg-transparent text-slate-800 dark:text-slate-200 focus:outline-none px-3"
+                        disabled={isLoading}
                     />
-                    <button
-                        onClick={() => handleSend()}
-                        disabled={isLoading || input.trim() === '' || isSessionActive}
-                        className="bg-blue-600 hover:bg-blue-700 disabled:bg-slate-400 disabled:cursor-not-allowed text-white rounded-lg p-2 transition-colors"
-                    >
-                       <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-6 h-6">
-                         <path strokeLinecap="round" strokeLinejoin="round" d="M6 12 3.269 3.125A59.769 59.769 0 0 1 21.485 12 59.768 59.768 0 0 1 3.27 20.875L5.999 12Zm0 0h7.5" />
-                       </svg>
-                    </button>
+                    <button onClick={() => handleSend()} disabled={isLoading || input.trim() === ''} className="bg-blue-600 hover:bg-blue-700 text-white rounded-lg p-2">➤</button>
                 </div>
             </div>
         </div>
