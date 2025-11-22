@@ -24,6 +24,7 @@ import VoiceAssistantOverlay from './components/VoiceAssistantOverlay';
 import { initialUserData, mockUser } from './services/mockData';
 import { User, UserData, Report, CommercialProposal, AdCampaign, Link, StoredFile, CompanyProfile, Payment, OtherReport } from './types';
 
+// ИМПОРТ API SUPABASE
 import { 
   fetchFullUserData, 
   apiAddReport, apiUpdateReport, apiDeleteReport,
@@ -44,6 +45,7 @@ const App: React.FC = () => {
     const [currentUser, setCurrentUser] = useState<User | null>(null);
     const [isSidebarOpen, setSidebarOpen] = useState<boolean>(true);
     
+    // Global Voice Control State
     const [isVoiceControlActive, setIsVoiceControlActive] = useState(false);
     const [voiceStatus, setVoiceStatus] = useState<'idle' | 'greeting' | 'listening' | 'speaking'>('idle');
     const [liveUserTranscript, setLiveUserTranscript] = useState('');
@@ -60,6 +62,7 @@ const App: React.FC = () => {
     const userTranscriptRef = useRef('');
     const aiTranscriptRef = useRef('');
     
+    // --- ЗАГРУЗКА ИЗ SUPABASE ---
     useEffect(() => {
         const loadData = async () => {
             setIsLoadingData(true);
@@ -76,10 +79,12 @@ const App: React.FC = () => {
         loadData();
     }, []);
 
+    // --- ПРИНУДИТЕЛЬНАЯ СВЕТЛАЯ ТЕМА ---
     useEffect(() => {
         document.documentElement.classList.remove('dark');
     }, [userData.companyProfile.darkModeEnabled]);
 
+    // Логика авторизации
     useEffect(() => {
         const rememberedUserJSON = localStorage.getItem('rememberedUser');
         if (rememberedUserJSON) {
@@ -113,6 +118,7 @@ const App: React.FC = () => {
         localStorage.removeItem('rememberedUser');
     }, []);
     
+    // --- CRUD ФУНКЦИИ ---
     const crudFunctions = useMemo(() => ({
         setReports: (updater: Report[] | ((prevReports: Report[]) => Report[])) => { setUserData(prev => ({ ...prev, reports: typeof updater === 'function' ? updater(prev.reports) : updater })); },
         addReport: async (report: Omit<Report, 'id'>) => { const newReport = { ...report, id: uuidv4() }; await apiAddReport(newReport); setUserData(prev => ({ ...prev, reports: [newReport, ...prev.reports] })); },
@@ -175,57 +181,60 @@ const App: React.FC = () => {
         navigate(page);
     };
 
-    // --- ГЕНЕРАТОР КОНТЕКСТА 2.0 (СЖАТЫЙ И ОПТИМИЗИРОВАННЫЙ) ---
+    // --- МОЩНЫЙ ГЕНЕРАТОР КОНТЕКСТА "ЛЮМИ" ---
     const generateContext = (data: UserData) => {
         const today = new Date().toLocaleDateString('ru-RU');
         
-        // Сжимаем данные в текст, чтобы не отправлять тяжелый JSON и не ломать соединение
-        const reportsText = data.reports.map(r => 
-            `- Отчет ${r.name} (${r.creationDate}): Продажи ${r.metrics.sales}, Лиды ${r.metrics.leads}`
-        ).join('\n');
-
-        const proposalsText = data.proposals.map(p => 
-            `- КП от ${p.date}: ${p.company || 'Клиент'} на ${p.amount} тг. Статус: ${p.status}. Направление: ${p.direction}`
-        ).join('\n');
-
-        const campaignsText = data.campaigns.map(c => 
-            `- Реклама "${c.name}": Статус ${c.status}, Расход ${c.spend}, Конверсии ${c.conversions}`
-        ).join('\n');
-
-        const paymentsText = data.payments.map(p => 
-            `- Платеж ${p.serviceName}: ${p.amount} ${p.currency}, след. оплата ${p.nextPaymentDate}`
-        ).join('\n');
+        // Сжимаем данные в читаемый текст (Data Minification)
+        // Это позволяет скормить AI ВСЮ базу данных, не превышая лимиты
+        const reportStr = data.reports.map(r => `[ОТЧЕТ ${r.name} (${r.creationDate})]: Продажи ${r.metrics.sales}, Лиды ${r.metrics.leads}, Бюджет ${r.metrics.budget}`).join('; ');
+        const propStr = data.proposals.map(p => `[КП]: ${p.company || 'Клиент'}, ${p.item}, ${p.amount}тг, Статус: ${p.status}, Направление: ${p.direction}, Дата: ${p.date}`).join('; ');
+        const campStr = data.campaigns.map(c => `[РЕКЛАМА]: ${c.name}, Статус: ${c.status}, Бюджет: ${c.budget}, Расход: ${c.spend}, Конв: ${c.conversions}`).join('; ');
+        const payStr = data.payments.map(p => `[ПЛАТЕЖ]: ${p.serviceName}, ${p.amount} ${p.currency}, След. дата: ${p.nextPaymentDate}`).join('; ');
+        const linksStr = data.links.map(l => `[ССЫЛКА]: ${l.url} (${l.comment})`).join('; ');
 
         return `
         СЕГОДНЯ: ${today}
-        РОЛЬ: Старший аналитик, инженер и оператор системы Lumi для ${data.companyProfile.companyName}.
+        ТВОЕ ИМЯ: Люми.
+        ТВОЯ РОЛЬ: Старший бизнес-аналитик, технический директор и оператор системы для компании ${data.companyProfile.companyName}.
         
-        ТВОИ ВОЗМОЖНОСТИ:
-        1. 🌐 ПОИСК В ИНТЕРНЕТЕ: Используй инструмент [googleSearch], если вопрос касается внешних данных (курсы, ГОСТы, новости, факты, которых нет в базе).
-        2. 🧭 УПРАВЛЕНИЕ: Открывай разделы сайта, если просят (функция navigateToPage).
-        3. 🛠️ ИНЖЕНЕР: Консультируй по РТИ и 3D-печати (материалы, расчеты).
-        4. 📊 АНАЛИТИК: Анализируй данные, которые я дам ниже.
+        ТВОИ НАВЫКИ И ИНСТРУКЦИИ:
+        
+        1. 🌐 ИНТЕРНЕТ-ПОИСК (Google):
+           - Если спрашивают про курсы валют, новости, ГОСТы, материалы (РТИ, 3D), законы — ИСПОЛЬЗУЙ инструмент [googleSearch].
+           - Не выдумывай факты, проверяй их в сети.
 
-        ПРАВИЛА:
-        - Язык: Только РУССКИЙ.
-        - Цифры: Читай словами.
+        2. 📊 АНАЛИЗ ДАННЫХ (Всевидящее око):
+           - Ниже я дам тебе СЖАТУЮ сводку всех данных компании. Ты видишь каждый отчет, каждое КП, каждую копейку.
+           - Анализируй тренды. Если видишь падение продаж или рост расходов — сообщай об этом.
+           - Сравнивай периоды и давай рекомендации по развитию.
 
-        === ДАННЫЕ КОМПАНИИ (СВОДКА) ===
+        3. 🧭 УПРАВЛЕНИЕ САЙТОМ (Карта системы):
+           - Ты знаешь структуру сайта. Если просят "покажи отчеты" или "иди в настройки" — вызывай функцию 'navigateToPage'.
+           - Разделы: /dashboard, /reports, /proposals, /campaigns, /payments, /storage, /settings, /unit-economics.
+
+        4. ✍️ РАБОТА С ТЕКСТОМ:
+           - Ты умеешь писать и редактировать деловые письма, коммерческие предложения, тексты для рекламы.
+           - Если просят перевести — переводи на любой язык качественно.
+
+        5. 🛠️ ТЕХНИЧЕСКИЙ КОНСУЛЬТАНТ:
+           - Ты эксперт в РТИ (резина, силикон, ГОСТы) и 3D-печати (пластики, принтеры).
+           - Помогай с расчетами материалов.
+
+        6. 🗣️ ГОЛОСОВОЙ ЭТИКЕТ:
+           - Говори кратко, емко и по делу. Не лей воду.
+           - Если тебе говорят "СТОП" или перебивают — замолкай немедленно.
+           - Язык: Русский (если не попросили другой).
+           - Цифры читай словами ("пять тысяч", "тенге").
+
+        === ПОЛНЫЙ СЛЕПОК БАЗЫ ДАННЫХ ===
         ПРОФИЛЬ: ${JSON.stringify(data.companyProfile.details)}
-        
-        ОТЧЕТЫ (ИСТОРИЯ):
-        ${reportsText || "Нет отчетов"}
-
-        КОММЕРЧЕСКИЕ ПРЕДЛОЖЕНИЯ:
-        ${proposalsText || "Нет КП"}
-
-        РЕКЛАМА:
-        ${campaignsText || "Нет кампаний"}
-
-        ПЛАТЕЖИ И ПОДПИСКИ:
-        ${paymentsText || "Нет платежей"}
-
-        СИСТЕМНАЯ ИНСТРУКЦИЯ: ${data.companyProfile.aiSystemInstruction}
+        ОТЧЕТЫ: ${reportStr || "Нет данных"}
+        КП: ${propStr || "Нет данных"}
+        РЕКЛАМА: ${campStr || "Нет данных"}
+        ПЛАТЕЖИ: ${payStr || "Нет данных"}
+        ССЫЛКИ: ${linksStr || "Нет данных"}
+        ИНСТРУКЦИЯ ПОЛЬЗОВАТЕЛЯ: ${data.companyProfile.aiSystemInstruction}
         `;
     };
 
@@ -260,9 +269,10 @@ const App: React.FC = () => {
                     responseModalities: [Modality.AUDIO],
                     speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName: 'Zephyr' } } },
                     systemInstruction: fullSystemInstruction,
-                    // Подключаем поиск в Google
+                    inputAudioTranscription: {},
+                    outputAudioTranscription: {},
                     tools: [
-                        { googleSearch: {} }, 
+                        { googleSearch: {} }, // ПОДКЛЮЧЕН ИНТЕРНЕТ
                         { functionDeclarations: [navigationFunctionDeclaration, createCommercialProposalFunctionDeclaration] }
                     ],
                 },
@@ -358,11 +368,8 @@ const App: React.FC = () => {
                     onerror: (e: any) => {
                         console.error("Live session error:", e);
                         if (!isVoiceControlActive) return;
-                        // Мягкий вывод ошибки
-                        const msg = e.message || "Разрыв соединения";
-                        if (!msg.includes("closing")) {
-                             alert(`Lumi: ${msg}. Попробуйте еще раз.`);
-                        }
+                        const msg = e.message || e.type || "Ошибка";
+                        if (!msg.includes("closing")) alert(`Ошибка соединения: ${msg}`);
                         cleanupVoiceSession();
                     },
                 }
@@ -370,7 +377,7 @@ const App: React.FC = () => {
             sessionRef.current = await sessionPromise;
         } catch (err) {
             console.error("Failed to start voice session:", err);
-            alert("Ошибка подключения. Проверьте консоль.");
+            alert("Не удалось подключиться к AI.");
             cleanupVoiceSession();
         }
     };
