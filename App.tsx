@@ -37,29 +37,27 @@ import {
 
 import Logo from './components/Logo';
 
-// --- ИНСТРУМЕНТЫ (TOOLS) ---
+// --- ИНСТРУМЕНТЫ ---
 const navigationTool = {
     name: "navigateToPage",
-    description: "Переходит на указанную страницу. Используй, когда пользователь просит открыть раздел.",
+    description: "Переходит на указанную страницу.",
     parameters: {
         type: "OBJECT",
-        properties: {
-            page: { type: "STRING", description: "URL путь (например: '/dashboard', '/reports')" },
-        },
+        properties: { page: { type: "STRING" } },
         required: ["page"],
     },
 };
 
 const createProposalTool = {
     name: "createCommercialProposal",
-    description: "Создает новое Коммерческое Предложение (КП).",
+    description: "Создает КП.",
     parameters: {
         type: "OBJECT",
         properties: {
-            company: { type: "STRING", description: "Клиент" },
-            item: { type: "STRING", description: "Товар" },
-            amount: { type: "NUMBER", description: "Сумма" },
-            direction: { type: "STRING", description: "РТИ или 3D" },
+            company: { type: "STRING" },
+            item: { type: "STRING" },
+            amount: { type: "NUMBER" },
+            direction: { type: "STRING" },
         },
         required: ["company", "item", "amount"],
     },
@@ -67,12 +65,12 @@ const createProposalTool = {
 
 const addMarketingIdeaTool = {
     name: "addMarketingIdea",
-    description: "Сохраняет идею для рекламы.",
+    description: "Сохраняет идею.",
     parameters: {
         type: "OBJECT",
         properties: {
-            name: { type: "STRING", description: "Суть идеи" },
-            budget: { type: "NUMBER", description: "Бюджет" },
+            name: { type: "STRING" },
+            budget: { type: "NUMBER" },
         },
         required: ["name"],
     },
@@ -84,8 +82,8 @@ const calculateMarginTool = {
     parameters: {
         type: "OBJECT",
         properties: {
-            costPrice: { type: "NUMBER", description: "Себестоимость" },
-            salePrice: { type: "NUMBER", description: "Цена продажи" },
+            costPrice: { type: "NUMBER" },
+            salePrice: { type: "NUMBER" },
         },
         required: ["costPrice", "salePrice"],
     },
@@ -97,14 +95,12 @@ const App: React.FC = () => {
     const [currentUser, setCurrentUser] = useState<User | null>(null);
     const [isSidebarOpen, setSidebarOpen] = useState<boolean>(true);
     
-    // Состояния интерфейса
     const [isVoiceControlActive, setIsVoiceControlActive] = useState(false);
-    const [isConnecting, setIsConnecting] = useState(false); // Чтобы не нажимали кнопку дважды
+    const [isConnecting, setIsConnecting] = useState(false);
     const [voiceStatus, setVoiceStatus] = useState<'idle' | 'greeting' | 'listening' | 'speaking'>('idle');
     const [liveUserTranscript, setLiveUserTranscript] = useState('');
     const [liveAiTranscript, setLiveAiTranscript] = useState('');
 
-    // Refs для аудио и сессии
     const sessionRef = useRef<LiveSession | null>(null);
     const inputAudioContextRef = useRef<AudioContext | null>(null);
     const outputAudioContextRef = useRef<AudioContext | null>(null);
@@ -117,7 +113,6 @@ const App: React.FC = () => {
     const userTranscriptRef = useRef('');
     const aiTranscriptRef = useRef('');
     
-    // --- ЗАГРУЗКА ДАННЫХ ---
     useEffect(() => {
         const loadData = async () => {
             setIsLoadingData(true);
@@ -183,95 +178,86 @@ const App: React.FC = () => {
     const navigate = useNavigate();
     const handleNavigation = (page: string) => { navigate(page); };
 
-    // --- ЛОГИКА ГОЛОСОВОГО АССИСТЕНТА ---
-
+    // Функция остановки всего (Safety Stop)
     const stopEverything = useCallback(() => {
-        // 1. Останавливаем процессор скриптов (самое важное для устранения ошибки)
         if (scriptProcessorRef.current) {
             scriptProcessorRef.current.onaudioprocess = null;
             scriptProcessorRef.current.disconnect();
             scriptProcessorRef.current = null;
         }
-        // 2. Останавливаем микрофон
         if (mediaStreamRef.current) {
             mediaStreamRef.current.getTracks().forEach(track => track.stop());
             mediaStreamRef.current = null;
         }
-        // 3. Отключаем источник
         if (mediaStreamSourceRef.current) {
             mediaStreamSourceRef.current.disconnect();
             mediaStreamSourceRef.current = null;
         }
-        // 4. Закрываем контексты
-        if (inputAudioContextRef.current) {
-            inputAudioContextRef.current.close().catch(() => {});
-            inputAudioContextRef.current = null;
-        }
-        if (outputAudioContextRef.current) {
-            outputAudioContextRef.current.close().catch(() => {});
-            outputAudioContextRef.current = null;
-        }
-        // 5. Закрываем сессию
+        inputAudioContextRef.current?.close().catch(() => {});
+        outputAudioContextRef.current?.close().catch(() => {});
         if (sessionRef.current) {
             try { sessionRef.current.close(); } catch (e) {}
             sessionRef.current = null;
         }
-        // 6. Очищаем буферы воспроизведения
         audioSourcesRef.current.forEach(source => { try { source.stop(); } catch(e){} });
         audioSourcesRef.current.clear();
-
-        // Сброс UI
         setIsVoiceControlActive(false);
         setIsConnecting(false);
         setVoiceStatus('idle');
     }, []);
 
-    // При размонтировании компонента всё чистим
     useEffect(() => { return () => stopEverything(); }, [stopEverything]);
 
+    // --- ИСПРАВЛЕННАЯ ГЕНЕРАЦИЯ КОНТЕКСТА (ФИЛЬТРАЦИЯ ДАННЫХ) ---
     const generateContext = (data: UserData) => {
         const today = new Date().toLocaleDateString('ru-RU');
-        const db = {
-            reports: data.reports,
-            proposals: data.proposals,
-            campaigns: data.campaigns,
-            payments: data.payments,
-            otherReports: data.otherReports,
-            links: data.links
+        
+        // ОПТИМИЗАЦИЯ: Берем только последние данные, чтобы не превысить лимит токенов (131072)
+        // и ОБЯЗАТЕЛЬНО убираем содержимое файлов, если оно есть.
+        const optimizedDb = {
+            // Берем последние 5 отчетов
+            reports: data.reports.slice(0, 5).map(r => ({
+                name: r.name, metrics: r.metrics
+            })),
+            // Берем последние 20 КП
+            proposals: data.proposals.slice(0, 20).map(p => ({
+                company: p.company, item: p.item, amount: p.amount, status: p.status, direction: p.direction
+            })),
+            // Кампании
+            campaigns: data.campaigns.slice(0, 10).map(c => ({
+                name: c.name, status: c.status, spend: c.spend
+            })),
+            // Файлы: ТОЛЬКО ИМЕНА. Никакого содержимого!
+            storage: data.files.map(f => f.name), 
+            // Ссылки
+            links: data.links,
+            // Платежи (последние 10)
+            payments: data.payments.slice(0, 10)
         };
+
         return `
         SYSTEM_INSTRUCTION:
         DATE: ${today}
         ROLE: Lumi, Эксперт KZ TRANSIT (Инженер РТИ/3D, Маркетолог).
         LANG: PURE RUSSIAN (No accent).
-        DB: ${JSON.stringify(db)}
-        INSTRUCTION: ${data.companyProfile.aiSystemInstruction}
+        CONTEXT_DATA_JSON: ${JSON.stringify(optimizedDb)}
+        USER_INSTRUCTION: ${data.companyProfile.aiSystemInstruction}
         `;
     };
 
     const connectToGemini = async () => {
         if (isConnecting) return;
         setIsConnecting(true);
-        
-        // Очистим всё перед новым подключением
         stopEverything();
 
         const apiKey = import.meta.env.VITE_GOOGLE_API_KEY;
-        if (!apiKey) { 
-            alert("API Key not found"); 
-            setIsConnecting(false); 
-            return; 
-        }
+        if (!apiKey) { alert("API Key not found"); setIsConnecting(false); return; }
 
-        // ЛОКАЛЬНЫЙ ФЛАГ АКТИВНОСТИ
-        // Это самое важное исправление: мы будем проверять этот флаг внутри колбэков.
-        // Если connectToGemini вызовется снова, старая переменная activeSession станет неактуальной для новой логики,
-        // но здесь мы используем замыкание.
         let isSessionActive = true;
 
         try {
             setIsVoiceControlActive(true);
-            setVoiceStatus('greeting'); // Показываем "Подключение..."
+            setVoiceStatus('greeting');
             setLiveUserTranscript('');
             setLiveAiTranscript('');
             userTranscriptRef.current = '';
@@ -279,6 +265,7 @@ const App: React.FC = () => {
             nextStartTimeRef.current = 0;
 
             const ai = new GoogleGenAI({ apiKey: apiKey });
+            // Генерируем ОБЛЕГЧЕННЫЙ контекст
             const fullContext = generateContext(userData);
 
             const toolsArray: any[] = [
@@ -286,13 +273,8 @@ const App: React.FC = () => {
                 { functionDeclarations: [navigationTool, createProposalTool, addMarketingIdeaTool, calculateMarginTool] }
             ];
 
-            // 1. Настройка аудио
             const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-            // Если пользователь отменил подключение пока мы просили микрофон
-            if (!isSessionActive) {
-                 stream.getTracks().forEach(t => t.stop());
-                 return;
-            }
+            if (!isSessionActive) { stream.getTracks().forEach(t => t.stop()); return; }
             mediaStreamRef.current = stream;
 
             const AudioContextClass = window.AudioContext || (window as any).webkitAudioContext;
@@ -309,7 +291,6 @@ const App: React.FC = () => {
             const processor = inputContext.createScriptProcessor(4096, 1, 1);
             scriptProcessorRef.current = processor;
 
-            // 2. Подключение к сокету
             const sessionPromise = ai.live.connect({
                 model: 'models/gemini-2.0-flash-exp',
                 config: {
@@ -322,7 +303,7 @@ const App: React.FC = () => {
                     onopen: () => {
                         if (!isSessionActive) return;
                         setVoiceStatus('listening');
-                        setIsConnecting(false); // Подключились!
+                        setIsConnecting(false);
                         console.log("Lumi Connected");
                     },
                     onmessage: async (message: LiveServerMessage) => {
@@ -341,12 +322,10 @@ const App: React.FC = () => {
                         if (message.toolCall) {
                             const functionResponses: any[] = [];
                             for (const fc of message.toolCall.functionCalls) {
-                                console.log("Calling tool:", fc.name);
                                 let result: any = { result: "Ok" };
                                 try {
                                     if (fc.name === 'navigateToPage') {
                                        handleNavigation(fc.args.page as string);
-                                       result = { result: "Done" };
                                     } 
                                     else if (fc.name === 'createCommercialProposal') {
                                         const { company, item, amount, direction } = fc.args as any;
@@ -357,12 +336,10 @@ const App: React.FC = () => {
                                            proposalNumber: `КП-${Math.floor(10000 + Math.random() * 90000)}`,
                                            company, item, amount, status: 'Ожидание', invoiceNumber: null, invoiceDate: null, paymentDate: null, paymentType: null,
                                         });
-                                        result = { result: "Created" };
                                     }
                                     else if (fc.name === 'addMarketingIdea') {
                                         const { name, budget } = fc.args as any;
                                         crudFunctions.addCampaign({ name, status: 'Черновик', spend: budget || 0, clicks: 0, leads: 0, sales: 0 });
-                                        result = { result: "Saved" };
                                     }
                                     else if (fc.name === 'calculateMargin') {
                                         const { costPrice, salePrice } = fc.args as any;
@@ -426,30 +403,16 @@ const App: React.FC = () => {
             });
 
             const session = await sessionPromise;
-            
-            // ДВОЙНАЯ ПРОВЕРКА: Если пока мы коннектились, юзер нажал стоп
-            if (!isSessionActive) {
-                session.close();
-                stopEverything();
-                return;
-            }
-            
+            if (!isSessionActive) { session.close(); stopEverything(); return; }
             sessionRef.current = session;
 
-            // 3. Запуск отправки аудио (Только если active)
             processor.onaudioprocess = (event) => {
                 if (!isSessionActive || !sessionRef.current) return;
-
                 const inputData = event.inputBuffer.getChannelData(0);
                 const int16 = new Int16Array(inputData.length);
                 for (let i = 0; i < inputData.length; i++) { int16[i] = inputData[i] * 32768; }
                 const pcmBlob: Blob = { data: encode(new Uint8Array(int16.buffer)), mimeType: 'audio/pcm;rate=16000' };
-                
-                try {
-                    sessionRef.current.sendRealtimeInput({ media: pcmBlob });
-                } catch (e) {
-                    // Ошибка отправки - не страшно, просто игнорируем
-                }
+                try { sessionRef.current.sendRealtimeInput({ media: pcmBlob }); } catch (e) {}
             };
 
             source.connect(processor);
@@ -459,17 +422,14 @@ const App: React.FC = () => {
             console.error("Failed to connect:", err);
             isSessionActive = false;
             stopEverything();
-            alert("Не удалось подключиться к серверу Google.");
+            alert("Сбой подключения (возможно перегрузка токенов).");
         }
     };
 
-    // Обработчик кнопки
     const handleToggleVoiceControl = () => {
         if (isVoiceControlActive) {
-            // Если уже включено - выключаем
             stopEverything();
         } else {
-            // Если выключено - включаем
             connectToGemini();
         }
     };
