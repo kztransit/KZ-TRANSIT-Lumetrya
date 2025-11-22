@@ -3,6 +3,7 @@ import { HashRouter, Routes, Route, Navigate, useNavigate } from 'react-router-d
 import { v4 as uuidv4 } from 'uuid';
 import { GoogleGenAI, LiveSession, LiveServerMessage, Modality, Blob } from "@google/genai";
 import { decode, decodeAudioData, encode } from './utils';
+import { navigationFunctionDeclaration, createCommercialProposalFunctionDeclaration } from './services/geminiService';
 
 import Sidebar from './components/Sidebar';
 import DashboardPage from './pages/DashboardPage';
@@ -21,7 +22,7 @@ import AIAssistantPage from './pages/AIAssistantPage';
 import OtherReportsPage from './pages/OtherReportsPage';
 import VoiceAssistantOverlay from './components/VoiceAssistantOverlay';
 import { initialUserData, mockUser } from './services/mockData';
-import { User, UserData } from './types';
+import { User, UserData, Report, CommercialProposal, AdCampaign, Link, StoredFile, CompanyProfile, Payment, OtherReport } from './types';
 
 import { 
   fetchFullUserData, 
@@ -37,58 +38,6 @@ import {
 
 import Logo from './components/Logo';
 
-// --- ИНСТРУМЕНТЫ ---
-const navigationTool = {
-    name: "navigateToPage",
-    description: "Переходит на указанную страницу.",
-    parameters: {
-        type: "OBJECT",
-        properties: { page: { type: "STRING" } },
-        required: ["page"],
-    },
-};
-
-const createProposalTool = {
-    name: "createCommercialProposal",
-    description: "Создает КП.",
-    parameters: {
-        type: "OBJECT",
-        properties: {
-            company: { type: "STRING" },
-            item: { type: "STRING" },
-            amount: { type: "NUMBER" },
-            direction: { type: "STRING" },
-        },
-        required: ["company", "item", "amount"],
-    },
-};
-
-const addMarketingIdeaTool = {
-    name: "addMarketingIdea",
-    description: "Сохраняет идею.",
-    parameters: {
-        type: "OBJECT",
-        properties: {
-            name: { type: "STRING" },
-            budget: { type: "NUMBER" },
-        },
-        required: ["name"],
-    },
-};
-
-const calculateMarginTool = {
-    name: "calculateMargin",
-    description: "Считает маржу.",
-    parameters: {
-        type: "OBJECT",
-        properties: {
-            costPrice: { type: "NUMBER" },
-            salePrice: { type: "NUMBER" },
-        },
-        required: ["costPrice", "salePrice"],
-    },
-};
-
 const App: React.FC = () => {
     const [userData, setUserData] = useState<UserData>(initialUserData);
     const [isLoadingData, setIsLoadingData] = useState(true);
@@ -96,7 +45,6 @@ const App: React.FC = () => {
     const [isSidebarOpen, setSidebarOpen] = useState<boolean>(true);
     
     const [isVoiceControlActive, setIsVoiceControlActive] = useState(false);
-    const [isConnecting, setIsConnecting] = useState(false);
     const [voiceStatus, setVoiceStatus] = useState<'idle' | 'greeting' | 'listening' | 'speaking'>('idle');
     const [liveUserTranscript, setLiveUserTranscript] = useState('');
     const [liveAiTranscript, setLiveAiTranscript] = useState('');
@@ -108,7 +56,9 @@ const App: React.FC = () => {
     const mediaStreamRef = useRef<MediaStream | null>(null);
     const mediaStreamSourceRef = useRef<MediaStreamAudioSourceNode | null>(null);
     
+    // !!! ВОТ ЭТА СТРОЧКА БЫЛА ПОТЕРЯНА, Я ЕЁ ВЕРНУЛ !!!
     const nextStartTimeRef = useRef(0);
+    
     const audioSourcesRef = useRef(new Set<AudioBufferSourceNode>());
     const userTranscriptRef = useRef('');
     const aiTranscriptRef = useRef('');
@@ -119,13 +69,19 @@ const App: React.FC = () => {
             try {
                 const data = await fetchFullUserData();
                 setUserData(data);
-            } catch (error) { console.error(error); } 
-            finally { setIsLoadingData(false); }
+                console.log("Lumi: Данные успешно загружены.");
+            } catch (error) {
+                console.error("Ошибка загрузки:", error);
+            } finally {
+                setIsLoadingData(false);
+            }
         };
         loadData();
     }, []);
 
-    useEffect(() => { document.documentElement.classList.remove('dark'); }, [userData.companyProfile.darkModeEnabled]);
+    useEffect(() => {
+        document.documentElement.classList.remove('dark');
+    }, [userData.companyProfile.darkModeEnabled]);
 
     useEffect(() => {
         const rememberedUserJSON = localStorage.getItem('rememberedUser');
@@ -178,145 +134,124 @@ const App: React.FC = () => {
     const navigate = useNavigate();
     const handleNavigation = (page: string) => { navigate(page); };
 
-    const stopEverything = useCallback(() => {
+    const cleanupVoiceSession = useCallback(() => {
+        mediaStreamRef.current?.getTracks().forEach(track => track.stop());
         if (scriptProcessorRef.current) {
             scriptProcessorRef.current.onaudioprocess = null;
             scriptProcessorRef.current.disconnect();
-            scriptProcessorRef.current = null;
         }
-        if (mediaStreamRef.current) {
-            mediaStreamRef.current.getTracks().forEach(track => track.stop());
-            mediaStreamRef.current = null;
-        }
-        if (mediaStreamSourceRef.current) {
-            mediaStreamSourceRef.current.disconnect();
-            mediaStreamSourceRef.current = null;
-        }
+        mediaStreamSourceRef.current?.disconnect();
         inputAudioContextRef.current?.close().catch(() => {});
         outputAudioContextRef.current?.close().catch(() => {});
-        if (sessionRef.current) {
-            try { sessionRef.current.close(); } catch (e) {}
-            sessionRef.current = null;
-        }
+
+        mediaStreamRef.current = null;
+        scriptProcessorRef.current = null;
+        mediaStreamSourceRef.current = null;
+        inputAudioContextRef.current = null;
+        outputAudioContextRef.current = null;
+        sessionRef.current = null;
+        
+        // Очищаем очередь воспроизведения
         audioSourcesRef.current.forEach(source => { try { source.stop(); } catch(e){} });
         audioSourcesRef.current.clear();
+        
         setIsVoiceControlActive(false);
-        setIsConnecting(false);
         setVoiceStatus('idle');
     }, []);
 
-    useEffect(() => { return () => stopEverything(); }, [stopEverything]);
+    useEffect(() => { return () => { if(sessionRef.current) sessionRef.current.close(); cleanupVoiceSession(); }; }, [cleanupVoiceSession]);
 
-    // --- ГЕНЕРАЦИЯ КОНТЕКСТА (ОБНОВЛЕННАЯ ИНСТРУКЦИЯ) ---
     const generateContext = (data: UserData) => {
         const today = new Date().toLocaleDateString('ru-RU');
-        
-        // Фильтрация данных для экономии токенов
-        const optimizedDb = {
-            reports: data.reports.slice(0, 5).map(r => ({ name: r.name, metrics: r.metrics })),
-            proposals: data.proposals.slice(0, 20).map(p => ({ company: p.company, item: p.item, amount: p.amount, status: p.status, direction: p.direction })),
-            campaigns: data.campaigns.slice(0, 10).map(c => ({ name: c.name, status: c.status, spend: c.spend })),
-            storage: data.files.map(f => f.name), 
-            links: data.links,
-            payments: data.payments.slice(0, 10)
-        };
+        const reports = data.reports.map(r => `OTCHET[${r.name}]:Sales=${r.metrics.sales},Leads=${r.metrics.leads}`).join(';');
+        const props = data.proposals.map(p => `KP[${p.company}|${p.amount}|${p.status}]`).join(';');
+        const camps = data.campaigns.map(c => `ADS[${c.name}|${c.status}|Spend=${c.spend}]`).join(';');
+        const pay = data.payments.map(p => `PAY[${p.serviceName}|${p.amount}|${p.nextPaymentDate}]`).join(';');
 
-        // ВОТ ЗДЕСЬ МЫ НАСТРАИВАЕМ ПОВЕДЕНИЕ ЛЮМИ
         return `
-        SYSTEM_INSTRUCTION:
-        DATE: ${today}
-        
-        IDENTITY:
-        - Name: Lumi (Люми).
-        - Company: ТОО "KZ TRANSIT".
-        - Role: Эксперт-инженер и Маркетолог.
-
-        VOICE RULES (STRICT):
-        1. LANGUAGE: PURE RUSSIAN only. No accents.
-        2. NUMBERS: 
-           - Произноси цифры СЛОВАМИ для естественного звучания.
-           - Пример: "5000" -> "пять тысяч", "1.5M" -> "полтора миллиона".
-           - Валюту "KZT" читай как "тенге".
-        3. STYLE:
-           - Отвечай КРАТКО и ПО ДЕЛУ (1-2 предложения, если не просят отчет).
-           - Не повторяй вопрос пользователя.
-           - Не используй длинные вступления ("Согласно данным..."). Говори сразу суть.
-        
-        CONTEXT_DATA: ${JSON.stringify(optimizedDb)}
-        USER_INSTRUCTION: ${data.companyProfile.aiSystemInstruction}
+        DATA:${today}
+        ROLE:Lumi, Business Analyst, Engineer.
+        LANG:RUSSIAN. Digits as words!
+        TOOLS:[googleSearch],[navigateToPage],[createCommercialProposal].
+        RULES:Short voice answers. Stop on command.
+        DB:
+        PROFILE:${JSON.stringify(data.companyProfile.details)}
+        REPORTS:${reports}
+        PROPOSALS:${props}
+        ADS:${camps}
+        PAYMENTS:${pay}
+        INSTRUCTION:${data.companyProfile.aiSystemInstruction}
         `;
     };
 
-    const connectToGemini = async () => {
-        if (isConnecting) return;
-        setIsConnecting(true);
-        stopEverything();
+    const handleToggleVoiceControl = async () => {
+        if (isVoiceControlActive) {
+            sessionRef.current?.close();
+            return;
+        }
+
+        setIsVoiceControlActive(true);
+        setVoiceStatus('greeting');
+        setLiveUserTranscript('');
+        setLiveAiTranscript('');
+        userTranscriptRef.current = '';
+        aiTranscriptRef.current = '';
+        
+        // Сброс времени начала воспроизведения
+        nextStartTimeRef.current = 0;
 
         const apiKey = import.meta.env.VITE_GOOGLE_API_KEY;
-        if (!apiKey) { alert("API Key not found"); setIsConnecting(false); return; }
-
-        let isSessionActive = true;
-
+        if (!apiKey) { alert("API Key not found"); cleanupVoiceSession(); return; }
+        
         try {
-            setIsVoiceControlActive(true);
-            setVoiceStatus('greeting');
-            setLiveUserTranscript('');
-            setLiveAiTranscript('');
-            userTranscriptRef.current = '';
-            aiTranscriptRef.current = '';
-            nextStartTimeRef.current = 0;
-
             const ai = new GoogleGenAI({ apiKey: apiKey });
             const fullContext = generateContext(userData);
-
-            const toolsArray: any[] = [
-                { googleSearch: {} },
-                { functionDeclarations: [navigationTool, createProposalTool, addMarketingIdeaTool, calculateMarginTool] }
-            ];
-
-            const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-            if (!isSessionActive) { stream.getTracks().forEach(t => t.stop()); return; }
-            mediaStreamRef.current = stream;
-
-            const AudioContextClass = window.AudioContext || (window as any).webkitAudioContext;
-            const inputContext = new AudioContextClass({ sampleRate: 16000 });
-            await inputContext.resume();
-            inputAudioContextRef.current = inputContext;
-
-            const outputContext = new AudioContextClass({ sampleRate: 24000 });
-            outputAudioContextRef.current = outputContext;
-
-            const source = inputContext.createMediaStreamSource(stream);
-            mediaStreamSourceRef.current = source;
-            
-            const processor = inputContext.createScriptProcessor(4096, 1, 1);
-            scriptProcessorRef.current = processor;
 
             const sessionPromise = ai.live.connect({
                 model: 'models/gemini-2.0-flash-exp',
                 config: {
                     responseModalities: [Modality.AUDIO],
-                    speechConfig: { 
-                        voiceConfig: { 
-                            prebuiltVoiceConfig: { 
-                                // 'Aoede' - Лучший женский голос для бизнес-ассистента
-                                voiceName: 'Aoede' 
-                            } 
-                        } 
-                    },
+                    speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName: 'Zephyr' } } },
                     systemInstruction: fullContext,
-                    tools: toolsArray,
+                    inputAudioTranscription: {},
+                    outputAudioTranscription: {},
+                    tools: [
+                        { googleSearch: {} }, 
+                        { functionDeclarations: [navigationFunctionDeclaration, createCommercialProposalFunctionDeclaration] }
+                    ],
                 },
                 callbacks: {
-                    onopen: () => {
-                        if (!isSessionActive) return;
+                    onopen: async () => {
+                        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+                        mediaStreamRef.current = stream;
+
+                        const AudioContextClass = window.AudioContext || (window as any).webkitAudioContext;
+                        const inputContext = new AudioContextClass({ sampleRate: 16000 });
+                        if (inputContext.state === 'suspended') await inputContext.resume();
+                        inputAudioContextRef.current = inputContext;
+
+                        const outputContext = new AudioContextClass({ sampleRate: 24000 });
+                        outputAudioContextRef.current = outputContext;
+                        
+                        mediaStreamSourceRef.current = inputAudioContextRef.current.createMediaStreamSource(stream);
+                        scriptProcessorRef.current = inputAudioContextRef.current.createScriptProcessor(4096, 1, 1);
+                        
+                        scriptProcessorRef.current.onaudioprocess = (event) => {
+                            const inputData = event.inputBuffer.getChannelData(0);
+                            const l = inputData.length;
+                            const int16 = new Int16Array(l);
+                            for (let i = 0; i < l; i++) { int16[i] = inputData[i] * 32768; }
+                            const pcmBlob: Blob = { data: encode(new Uint8Array(int16.buffer)), mimeType: 'audio/pcm;rate=16000' };
+                            sessionPromise.then(session => {
+                                try { session.sendRealtimeInput({ media: pcmBlob }); } catch (e) {}
+                            });
+                        };
+                        mediaStreamSourceRef.current.connect(scriptProcessorRef.current);
+                        scriptProcessorRef.current.connect(inputAudioContextRef.current.destination);
+
                         setVoiceStatus('listening');
-                        setIsConnecting(false);
-                        console.log("Lumi Connected");
                     },
                     onmessage: async (message: LiveServerMessage) => {
-                        if (!isSessionActive) return;
-
                         if (message.serverContent?.outputTranscription) {
                             setVoiceStatus('speaking');
                             aiTranscriptRef.current += message.serverContent.outputTranscription.text;
@@ -326,51 +261,34 @@ const App: React.FC = () => {
                             userTranscriptRef.current += message.serverContent.inputTranscription.text;
                             setLiveUserTranscript(userTranscriptRef.current);
                         }
-                        
                         if (message.toolCall) {
-                            const functionResponses: any[] = [];
                             for (const fc of message.toolCall.functionCalls) {
-                                let result: any = { result: "Ok" };
-                                try {
-                                    if (fc.name === 'navigateToPage') {
-                                       handleNavigation(fc.args.page as string);
-                                    } 
-                                    else if (fc.name === 'createCommercialProposal') {
-                                        const { company, item, amount, direction } = fc.args as any;
-                                        let normDir: 'РТИ' | '3D' = (direction && direction.includes('3D')) ? '3D' : 'РТИ';
-                                        crudFunctions.addProposal({
-                                           date: new Date().toISOString().split('T')[0],
-                                           direction: normDir,
-                                           proposalNumber: `КП-${Math.floor(10000 + Math.random() * 90000)}`,
-                                           company, item, amount, status: 'Ожидание', invoiceNumber: null, invoiceDate: null, paymentDate: null, paymentType: null,
-                                        });
-                                    }
-                                    else if (fc.name === 'addMarketingIdea') {
-                                        const { name, budget } = fc.args as any;
-                                        crudFunctions.addCampaign({ name, status: 'Черновик', spend: budget || 0, clicks: 0, leads: 0, sales: 0 });
-                                    }
-                                    else if (fc.name === 'calculateMargin') {
-                                        const { costPrice, salePrice } = fc.args as any;
-                                        result = { result: `Margin: ${(((salePrice-costPrice)/salePrice)*100).toFixed(1)}%` };
-                                    }
-                                } catch(e) { result = { error: "Failed" }; }
-                                functionResponses.push({ id: fc.id, name: fc.name, response: result });
-                            }
-                            if (functionResponses.length > 0 && isSessionActive) {
-                                sessionRef.current?.sendToolResponse({ functionResponses }).catch(() => {});
+                                let functionResult = "Действие выполнено.";
+                                if (fc.name === 'navigateToPage' && fc.args.page) {
+                                   handleNavigation(fc.args.page as string);
+                                   functionResult = `Переход на страницу ${fc.args.page}`;
+                                }
+                                if (fc.name === 'createCommercialProposal') {
+                                   const { company, item, amount, direction, date } = fc.args as any;
+                                   let normalizedDirection: 'РТИ' | '3D' = 'РТИ';
+                                   if (typeof direction === 'string' && direction.toUpperCase() === '3D') normalizedDirection = '3D';
+                                   crudFunctions.addProposal({
+                                       date: date || new Date().toISOString().split('T')[0],
+                                       direction: normalizedDirection,
+                                       proposalNumber: `КП-${Math.floor(10000 + Math.random() * 90000)}`,
+                                       company: company, item: item, amount: amount, status: 'Ожидание', invoiceNumber: null, invoiceDate: null, paymentDate: null, paymentType: null,
+                                   });
+                                   functionResult = `КП создано.`;
+                                }
+                                sessionPromise.then((session) => {
+                                   session.sendToolResponse({ functionResponses: { id: fc.id, name: fc.name, response: { result: functionResult } } });
+                                });
                             }
                         }
-                        
                         if (message.serverContent?.turnComplete) {
                             userTranscriptRef.current = '';
                             aiTranscriptRef.current = '';
-                            setTimeout(() => { 
-                                if(isSessionActive) {
-                                    setLiveUserTranscript(''); 
-                                    setLiveAiTranscript(''); 
-                                    setVoiceStatus('listening'); 
-                                }
-                            }, 2000);
+                            setTimeout(() => { setLiveUserTranscript(''); setLiveAiTranscript(''); setVoiceStatus('listening'); }, 2000);
                         }
                         
                         const modelTurn = message.serverContent?.modelTurn;
@@ -379,60 +297,48 @@ const App: React.FC = () => {
                                 const base64Audio = part.inlineData?.data;
                                 if (base64Audio && outputAudioContextRef.current) {
                                     const outCtx = outputAudioContextRef.current;
+                                    
+                                    // 1. Декодируем звук
                                     const audioBuffer = await decodeAudioData(decode(base64Audio), outCtx, 24000, 1);
+                                    
+                                    // 2. Рассчитываем время начала (чтобы фразы шли друг за другом)
                                     const now = outCtx.currentTime;
-                                    if (nextStartTimeRef.current < now) nextStartTimeRef.current = now;
+                                    // Если пауза была большой, сбрасываем таймер на "сейчас"
+                                    if (nextStartTimeRef.current < now) {
+                                        nextStartTimeRef.current = now;
+                                    }
+                                    
                                     const source = outCtx.createBufferSource();
                                     source.buffer = audioBuffer;
                                     source.connect(outCtx.destination);
+                                    
+                                    // 3. Играем
                                     source.start(nextStartTimeRef.current);
+                                    
+                                    // 4. Сдвигаем время для следующего куска
                                     nextStartTimeRef.current += audioBuffer.duration;
+                                    
+                                    // Сохраняем для очистки
                                     audioSourcesRef.current.add(source);
                                     source.onended = () => audioSourcesRef.current.delete(source);
                                 }
                             }
                         }
                     },
-                    onclose: (e: any) => {
-                        console.log("Session closed", e);
-                        if (isSessionActive) { isSessionActive = false; stopEverything(); }
-                    },
+                    onclose: cleanupVoiceSession,
                     onerror: (e: any) => {
-                        console.error("Session error", e);
-                        if (isSessionActive) { isSessionActive = false; stopEverything(); }
-                    }
+                        console.error(e);
+                        if (isVoiceControlActive && !e.message?.includes("closing")) {
+                            alert(`Сбой Люми: ${e.message || "Ошибка сети"}`);
+                        }
+                        cleanupVoiceSession();
+                    },
                 }
             });
-
-            const session = await sessionPromise;
-            if (!isSessionActive) { session.close(); stopEverything(); return; }
-            sessionRef.current = session;
-
-            processor.onaudioprocess = (event) => {
-                if (!isSessionActive || !sessionRef.current) return;
-                const inputData = event.inputBuffer.getChannelData(0);
-                const int16 = new Int16Array(inputData.length);
-                for (let i = 0; i < inputData.length; i++) { int16[i] = inputData[i] * 32768; }
-                const pcmBlob: Blob = { data: encode(new Uint8Array(int16.buffer)), mimeType: 'audio/pcm;rate=16000' };
-                try { sessionRef.current.sendRealtimeInput({ media: pcmBlob }); } catch (e) {}
-            };
-
-            source.connect(processor);
-            processor.connect(inputContext.destination);
-
+            sessionRef.current = await sessionPromise;
         } catch (err) {
-            console.error("Failed to connect:", err);
-            isSessionActive = false;
-            stopEverything();
-            alert("Сбой подключения (возможно перегрузка токенов).");
-        }
-    };
-
-    const handleToggleVoiceControl = () => {
-        if (isVoiceControlActive) {
-            stopEverything();
-        } else {
-            connectToGemini();
+            alert("Не удалось подключиться.");
+            cleanupVoiceSession();
         }
     };
     
@@ -448,7 +354,7 @@ const App: React.FC = () => {
                         <Routes>
                             <Route path="/" element={<Navigate to="/dashboard" replace />} />
                             <Route path="/dashboard" element={<DashboardPage reports={userData.reports} proposals={userData.proposals}/>} />
-                            <Route path="/ai-assistant" element={<AIAssistantPage userData={userData} addReport={crudFunctions.addReport} addMultipleProposals={crudFunctions.addMultipleProposals} addMultipleCampaigns={crudFunctions.addMultipleCampaigns} addOtherReport={crudFunctions.addOtherReport} updateOtherReport={crudFunctions.updateOtherReport} addProposal={crudFunctions.addProposal} updateProposal={crudFunctions.updateProposal} isGlobalVoiceActive={isVoiceControlActive} onDisableGlobalVoice={() => stopEverything()} />} />
+                            <Route path="/ai-assistant" element={<AIAssistantPage userData={userData} addReport={crudFunctions.addReport} addMultipleProposals={crudFunctions.addMultipleProposals} addMultipleCampaigns={crudFunctions.addMultipleCampaigns} addOtherReport={crudFunctions.addOtherReport} updateOtherReport={crudFunctions.updateOtherReport} addProposal={crudFunctions.addProposal} updateProposal={crudFunctions.updateProposal} isGlobalVoiceActive={isVoiceControlActive} onDisableGlobalVoice={() => sessionRef.current?.close()} />} />
                             <Route path="/reports" element={<ReportsPage reports={userData.reports} addReport={crudFunctions.addReport} deleteReport={crudFunctions.deleteReport} updateReport={crudFunctions.updateReport} />} />
                             <Route path="/other-reports" element={<OtherReportsPage reports={userData.otherReports} addReport={crudFunctions.addOtherReport} updateReport={crudFunctions.updateOtherReport} deleteReport={crudFunctions.deleteOtherReport} />} />
                             <Route path="/proposals" element={<CommercialProposalsPage proposals={userData.proposals} addProposal={crudFunctions.addProposal} deleteProposal={crudFunctions.deleteProposal} setProposals={crudFunctions.setProposals} updateProposal={crudFunctions.updateProposal} />} />
@@ -464,7 +370,7 @@ const App: React.FC = () => {
                         </Routes>
                     </main>
                 </div>
-                {isVoiceControlActive && <VoiceAssistantOverlay status={voiceStatus} userTranscript={liveUserTranscript} aiTranscript={liveAiTranscript} onClose={handleToggleVoiceControl} />}
+                {isVoiceControlActive && <VoiceAssistantOverlay status={voiceStatus} userTranscript={liveUserTranscript} aiTranscript={liveAiTranscript} onClose={() => sessionRef.current?.close()} />}
             </div>
     );
 };
