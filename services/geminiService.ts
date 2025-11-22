@@ -1,8 +1,8 @@
-import { GoogleGenAI } from "@google/genai";
+import { GoogleGenAI, FunctionDeclaration, SchemaType } from "@google/genai";
 import { UserData } from "../types";
 
-// --- ИНСТРУМЕНТЫ (Определяем как обычные объекты, чтобы избежать ошибок типизации при билде) ---
-
+// --- ИНСТРУМЕНТЫ (Экспортируем их для Voice Assistant, но в текстовом чате отключаем) ---
+// Определяем как обычные объекты JS, чтобы избежать конфликтов типов при билде
 export const navigationFunctionDeclaration = {
     name: 'navigateToPage',
     description: 'Переходит на указанную страницу приложения.',
@@ -84,120 +84,102 @@ const cleanJson = (text: string | null | undefined): string => {
     return cleaned.trim();
 };
 
+const getSafeText = (response: any): string => {
+    // В новой SDK текст часто лежит глубоко или возвращается методом text()
+    if (response?.text && typeof response.text === 'function') {
+        try { return response.text(); } catch (e) {}
+    }
+    // Проверка структуры candidates (fallback)
+    return response?.candidates?.[0]?.content?.parts?.[0]?.text || "";
+};
+
 // --- АНАЛИЗ ФАЙЛОВ И ДАННЫХ ---
 
-// 1. АНАЛИЗ ОТЧЕТА (С УСИЛЕННЫМ ПРОМПТОМ)
 export const analyzeReportImage = async (mimeType: string, base64Data: string): Promise<string> => {
     const apiKey = import.meta.env.VITE_GOOGLE_API_KEY;
     if (!apiKey) throw new Error("API Key not found");
     
     const client = new GoogleGenAI({ apiKey });
-    const model = client.getGenerativeModel({ model: "gemini-2.0-flash-exp" });
 
-    const prompt = `
-    Ты — аналитик данных. Извлеки цифры из отчета.
-    Верни JSON объект строго с ключами "РТИ" и "3D".
-    Внутри каждого ключа: budget, clicks, leads, proposals, invoices, deals, sales.
-    Все значения — ЧИСЛА (0 если нет данных).
-    Пример: { "РТИ": { "budget": 100, ... }, "3D": { "budget": 0, ... } }
-    `;
+    const response = await client.models.generateContent({
+        model: "models/gemini-2.0-flash-exp",
+        config: {
+            systemInstruction: `Ты — аналитик данных. Извлеки цифры из отчета.
+            Верни JSON объект строго с ключами "РТИ" и "3D".
+            Внутри каждого ключа: budget, clicks, leads, proposals, invoices, deals, sales.
+            Все значения — ЧИСЛА (0 если нет данных).`
+        },
+        contents: [
+            {
+                role: "user",
+                parts: [
+                    { inlineData: { mimeType, data: base64Data } },
+                    { text: "Извлеки данные из этого отчета." }
+                ]
+            }
+        ]
+    });
 
-    const response = await model.generateContent([
-        { text: prompt },
-        { inlineData: { mimeType, data: base64Data } }
-    ]);
-
-    return cleanJson(response.response.text());
+    return cleanJson(getSafeText(response));
 };
 
-// 2. АНАЛИЗ КП
 export const analyzeProposalsImage = async (mimeType: string, base64Data: string): Promise<any> => {
     const apiKey = import.meta.env.VITE_GOOGLE_API_KEY;
     if (!apiKey) throw new Error("API Key not found");
-    
     const client = new GoogleGenAI({ apiKey });
-    const model = client.getGenerativeModel({ model: "gemini-2.0-flash-exp" });
 
-    const prompt = `
-    Распознай список КП из изображения.
-    Верни JSON объект с ключами "РТИ" и "3D" (массивы).
-    Для каждого КП: date (YYYY-MM-DD), company, item, amount (число), status.
-    Пример: { "РТИ": [{ "date": "2023-10-01", "company": "ABC", "amount": 50000 }], "3D": [] }
-    `;
-
-    try {
-        const response = await model.generateContent([
-            { text: prompt },
-            { inlineData: { mimeType, data: base64Data } }
-        ]);
-        return JSON.parse(cleanJson(response.response.text()));
-    } catch (e) {
-        console.error("Error parsing proposals:", e);
-        return { "РТИ": [], "3D": [] };
-    }
+    const response = await client.models.generateContent({
+        model: "models/gemini-2.0-flash-exp",
+        config: {
+            systemInstruction: `Распознай список КП. Верни JSON объект с ключами "РТИ" и "3D" (массивы).
+            Для каждого КП: date (YYYY-MM-DD), company, item, amount (число), status.`
+        },
+        contents: [{ role: "user", parts: [{ inlineData: { mimeType, data: base64Data } }, { text: "Список КП" }] }]
+    });
+    
+    return JSON.parse(cleanJson(getSafeText(response)));
 };
 
-// 3. АНАЛИЗ КАМПАНИЙ
 export const analyzeCampaignsImage = async (mimeType: string, base64Data: string): Promise<any[]> => {
     const apiKey = import.meta.env.VITE_GOOGLE_API_KEY;
     if (!apiKey) throw new Error("API Key not found");
-    
     const client = new GoogleGenAI({ apiKey });
-    const model = client.getGenerativeModel({ model: "gemini-2.0-flash-exp" });
 
-    const prompt = `
-    Извлеки таблицу рекламных кампаний.
-    Верни массив JSON объектов: [{ "name": "...", "status": "...", "spend": 1000 }].
-    `;
+    const response = await client.models.generateContent({
+        model: "models/gemini-2.0-flash-exp",
+        config: { systemInstruction: "Извлеки таблицу кампаний. Верни массив JSON объектов: [{ name, status, spend }]." },
+        contents: [{ role: "user", parts: [{ inlineData: { mimeType, data: base64Data } }, { text: "Таблица кампаний" }] }]
+    });
 
-    try {
-        const response = await model.generateContent([
-            { text: prompt },
-            { inlineData: { mimeType, data: base64Data } }
-        ]);
-        return JSON.parse(cleanJson(response.response.text()));
-    } catch (e) {
-        console.error("Error parsing campaigns:", e);
-        return [];
-    }
+    return JSON.parse(cleanJson(getSafeText(response)));
 };
 
-// 4. АНАЛИЗ СЧЕТА (ДЛЯ ПЛАТЕЖЕЙ)
 export const analyzePaymentInvoice = async (mimeType: string, base64Data: string): Promise<any> => {
     const apiKey = import.meta.env.VITE_GOOGLE_API_KEY;
     if (!apiKey) throw new Error("API Key not found");
-    
     const client = new GoogleGenAI({ apiKey });
-    const model = client.getGenerativeModel({ model: "gemini-2.0-flash-exp" });
 
-    const prompt = "Проанализируй счет. Верни JSON: { serviceName, amount (число), currency, paymentPeriod, lastPaymentDate, paymentDetails, paymentMethod }.";
+    const response = await client.models.generateContent({
+        model: "models/gemini-2.0-flash-exp",
+        config: { systemInstruction: "Проанализируй счет. Верни JSON: { serviceName, amount (число), currency, paymentPeriod, lastPaymentDate, paymentDetails, paymentMethod }." },
+        contents: [{ role: "user", parts: [{ inlineData: { mimeType, data: base64Data } }, { text: "Данные платежа" }] }]
+    });
 
-    try {
-        const response = await model.generateContent([
-            { text: prompt },
-            { inlineData: { mimeType, data: base64Data } }
-        ]);
-        return JSON.parse(cleanJson(response.response.text()));
-    } catch (e) {
-        console.error("Error parsing invoice:", e);
-        return {};
-    }
+    return JSON.parse(cleanJson(getSafeText(response)));
 };
 
-// 5. АНАЛИЗ АНОМАЛИЙ (Consistency)
 export const analyzeDataConsistency = async (reports: any[]): Promise<string> => {
     const apiKey = import.meta.env.VITE_GOOGLE_API_KEY;
     if (!apiKey) throw new Error("API Key not found");
-    
     const client = new GoogleGenAI({ apiKey });
-    const model = client.getGenerativeModel({ model: "gemini-2.0-flash-exp" });
     
     try {
-        const response = await model.generateContent({
-            systemInstruction: { parts: [{ text: "Ты аналитик данных. Найди аномалии или тренды в данных JSON." }] },
+        const response = await client.models.generateContent({
+            model: "models/gemini-2.0-flash-exp",
+            config: { systemInstruction: "Ты аналитик данных. Найди аномалии или тренды в данных JSON." },
             contents: [{ role: "user", parts: [{ text: `Analyze briefly: ${JSON.stringify(reports.slice(-5))}` }] }]
         });
-        return response.response.text() || "Данных недостаточно для анализа.";
+        return getSafeText(response) || "Данных недостаточно для анализа.";
     } catch (e) {
         console.error("Error analyzing consistency:", e);
         return "Не удалось провести анализ данных.";
@@ -210,37 +192,23 @@ export const getAIAssistantResponse = async (prompt: string, userData: UserData,
     if (!apiKey) throw new Error("API Key not found");
     
     const client = new GoogleGenAI({ apiKey });
-    const model = client.getGenerativeModel({ model: "gemini-2.0-flash-exp" });
     
     try {
-        const response = await model.generateContent({
-            systemInstruction: {
-                parts: [{ text: systemInstruction }]
+        const response = await client.models.generateContent({
+            model: "models/gemini-2.0-flash-exp",
+            config: {
+                systemInstruction: { parts: [{ text: systemInstruction }] },
+                tools: [{ googleSearch: {} }] // Оставляем только поиск для текстового режима
             },
-            // Для текстового чата подключаем поиск, но отключаем управление навигацией, 
-            // чтобы он просто отвечал текстом
-            tools: [
-                { googleSearch: {} } 
-            ],
-            contents: [
-                {
-                    role: "user",
-                    parts: [{ text: prompt }]
-                }
-            ]
+            contents: [{ role: "user", parts: [{ text: prompt }] }]
         });
 
-        const text = response.response.text();
-        
-        if (!text) {
-             return { text: "Извините, не удалось получить ответ от сервиса.", functionCall: null };
-        }
-
+        const text = getSafeText(response);
+        if (!text) return { text: "Нет ответа от сервиса.", functionCall: null };
         return { text: text, functionCall: null };
         
     } catch (error: any) {
         console.error("GEMINI ERROR:", error);
-        // Возвращаем читаемую ошибку, чтобы интерфейс не падал
-        return { text: "Произошла ошибка при обращении к ИИ. Попробуйте позже.", functionCall: null };
+        return { text: "Произошла ошибка при обращении к ИИ.", functionCall: null };
     }
 };
