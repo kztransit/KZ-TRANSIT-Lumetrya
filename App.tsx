@@ -102,7 +102,6 @@ const App: React.FC = () => {
     const [liveUserTranscript, setLiveUserTranscript] = useState('');
     const [liveAiTranscript, setLiveAiTranscript] = useState('');
 
-    // Refs для управления состоянием без ререндеров
     const sessionRef = useRef<LiveSession | null>(null);
     const inputAudioContextRef = useRef<AudioContext | null>(null);
     const outputAudioContextRef = useRef<AudioContext | null>(null);
@@ -110,7 +109,7 @@ const App: React.FC = () => {
     const mediaStreamRef = useRef<MediaStream | null>(null);
     const mediaStreamSourceRef = useRef<MediaStreamAudioSourceNode | null>(null);
     
-    // Флаг для безопасной остановки
+    // Флаг, что мы находимся в процессе закрытия
     const isClosingRef = useRef(false);
     
     const nextStartTimeRef = useRef(0);
@@ -183,34 +182,39 @@ const App: React.FC = () => {
     const navigate = useNavigate();
     const handleNavigation = (page: string) => { navigate(page); };
 
-    // БЕЗОПАСНАЯ ОЧИСТКА СЕССИИ
+    // --- УЛУЧШЕННАЯ ОЧИСТКА СЕССИИ ---
     const cleanupVoiceSession = useCallback(() => {
-        isClosingRef.current = true; // 1. Ставим флаг, что мы закрываемся
+        isClosingRef.current = true; 
 
-        // 2. Сначала отрубаем обработчик аудио, чтобы не слать данные в мертвый сокет
+        // 1. Сразу отключаем обработчик, чтобы остановить поток данных
         if (scriptProcessorRef.current) {
             scriptProcessorRef.current.onaudioprocess = null;
             scriptProcessorRef.current.disconnect();
         }
+        
+        // 2. Отключаем источник
         if (mediaStreamSourceRef.current) {
             mediaStreamSourceRef.current.disconnect();
         }
 
-        // 3. Останавливаем микрофон
+        // 3. Гасим микрофон
         if (mediaStreamRef.current) {
             mediaStreamRef.current.getTracks().forEach(track => track.stop());
         }
 
-        // 4. Закрываем сокет сессии
+        // 4. Закрываем сокет (если он есть)
         if (sessionRef.current) {
-            sessionRef.current.close();
+            // Небольшая задержка перед закрытием иногда помогает избежать гонки
+            try {
+                sessionRef.current.close();
+            } catch (e) {
+                // Игнорируем ошибки при закрытии
+            }
         }
 
-        // 5. Закрываем аудио контексты
         inputAudioContextRef.current?.close().catch(() => {});
         outputAudioContextRef.current?.close().catch(() => {});
 
-        // Сброс ссылок
         mediaStreamRef.current = null;
         scriptProcessorRef.current = null;
         mediaStreamSourceRef.current = null;
@@ -223,7 +227,7 @@ const App: React.FC = () => {
         
         setIsVoiceControlActive(false);
         setVoiceStatus('idle');
-        isClosingRef.current = false; // Сброс флага
+        isClosingRef.current = false;
     }, []);
 
     useEffect(() => { return () => { cleanupVoiceSession(); }; }, [cleanupVoiceSession]);
@@ -249,13 +253,11 @@ const App: React.FC = () => {
     };
 
     const handleToggleVoiceControl = async () => {
-        // Если уже активна - выключаем
         if (isVoiceControlActive) {
             cleanupVoiceSession();
             return;
         }
 
-        // Сброс
         setIsVoiceControlActive(true);
         setVoiceStatus('greeting');
         setLiveUserTranscript('');
@@ -287,7 +289,11 @@ const App: React.FC = () => {
                 },
                 callbacks: {
                     onopen: async () => {
-                        if (isClosingRef.current) return; // Если успели закрыть пока коннектились
+                        // Если пока мы подключались, пользователь нажал "стоп"
+                        if (isClosingRef.current) {
+                            (await sessionPromise).close();
+                            return;
+                        }
 
                         const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
                         mediaStreamRef.current = stream;
@@ -303,9 +309,9 @@ const App: React.FC = () => {
                         mediaStreamSourceRef.current = inputAudioContextRef.current.createMediaStreamSource(stream);
                         scriptProcessorRef.current = inputAudioContextRef.current.createScriptProcessor(4096, 1, 1);
                         
-                        // ВАЖНО: Безопасная отправка аудио
+                        // --- БЕЗОПАСНАЯ ОБРАБОТКА АУДИО ---
                         scriptProcessorRef.current.onaudioprocess = (event) => {
-                            if (isClosingRef.current || !sessionRef.current) return; // ЗАЩИТА ОТ ОШИБКИ
+                            if (isClosingRef.current || !sessionRef.current) return;
 
                             const inputData = event.inputBuffer.getChannelData(0);
                             const int16 = new Int16Array(inputData.length);
@@ -313,12 +319,11 @@ const App: React.FC = () => {
                             
                             const pcmBlob: Blob = { data: encode(new Uint8Array(int16.buffer)), mimeType: 'audio/pcm;rate=16000' };
                             
-                            // Пытаемся отправить, ловим ошибку если сокет закрылся внезапно
+                            // Оборачиваем отправку в try-catch чтобы подавить ошибку "closed state"
                             try {
                                 sessionRef.current.sendRealtimeInput({ media: pcmBlob });
                             } catch (e) {
-                                // Игнорируем ошибки отправки в закрытый сокет
-                                console.warn("Socket send missed"); 
+                                // Если сокет закрылся в момент отправки - просто игнорируем
                             }
                         };
                         
@@ -375,7 +380,7 @@ const App: React.FC = () => {
                             if (functionResponses.length > 0 && !isClosingRef.current) {
                                 try {
                                     sessionRef.current?.sendToolResponse({ functionResponses });
-                                } catch(e) { console.warn("Tool response failed"); }
+                                } catch(e) {}
                             }
                         }
                         
@@ -412,18 +417,22 @@ const App: React.FC = () => {
                         }
                     },
                     onclose: () => {
-                        // Обработка закрытия со стороны сервера
                         if (!isClosingRef.current) cleanupVoiceSession();
                     },
                     onerror: (e: any) => {
-                        console.log("Session Error (safe to ignore if closing):", e);
+                        // Игнорируем ошибки сети при закрытии
                         if (!isClosingRef.current) cleanupVoiceSession();
                     },
                 }
             });
             
             const session = await sessionPromise;
-            sessionRef.current = session; // Присваиваем реф ТОЛЬКО когда промис выполнился
+            // Если закрыли, пока ждали промис
+            if (isClosingRef.current) {
+                session.close();
+                return;
+            }
+            sessionRef.current = session;
 
         } catch (err) {
             console.error("Connection failed", err);
