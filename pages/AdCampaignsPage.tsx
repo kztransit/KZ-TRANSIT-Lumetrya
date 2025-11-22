@@ -21,7 +21,11 @@ const typeColorMap: { [key in AdCampaign['type']]: string } = {
     'Максимальная эффективность': 'bg-purple-100 text-purple-800'
 }
 
-const formatTenge = (value: number) => `₸${new Intl.NumberFormat('ru-RU', { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(value)}`;
+// Безопасное форматирование валюты (защита от null)
+const formatTenge = (value: number | null | undefined) => {
+    const val = value || 0;
+    return `₸${new Intl.NumberFormat('ru-RU', { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(val)}`;
+};
 
 const AddCampaignModal: React.FC<{onClose: () => void, onSave: (campaign: Omit<AdCampaign, 'id'>) => void}> = ({onClose, onSave}) => {
     const handleSubmit = (e: React.FormEvent<HTMLFormElement>) => {
@@ -31,7 +35,7 @@ const AddCampaignModal: React.FC<{onClose: () => void, onSave: (campaign: Omit<A
             name: formData.get('name') as string,
             status: formData.get('status') as AdCampaign['status'],
             type: formData.get('type') as AdCampaign['type'],
-            budget: Number(formData.get('budget')),
+            budget: Number(formData.get('budget')) || 0,
             budgetType: formData.get('budgetType') as AdCampaign['budgetType'],
             impressions: 0, clicks: 0, ctr: 0, spend: 0, conversions: 0, cpc: 0, conversionRate: 0, cpa: 0,
             strategy: 'Максимум конверсий',
@@ -103,7 +107,6 @@ const ImportCampaignsModal: React.FC<{onClose: () => void, onImport: (campaigns:
                 } else if (typeStr.includes('максимальная') || typeStr.includes('эффективность') || typeStr.includes('pmax')) {
                     type = 'Максимальная эффективность';
                 } else {
-                    // Fallback to old logic if AI fails to determine type
                     type = ((p.name || '').toLowerCase().includes('поиск') ? 'Поиск' : 'Максимальная эффективность');
                 }
 
@@ -232,14 +235,14 @@ const AdCampaignsPage: React.FC<AdCampaignsPageProps> = ({ campaigns, addCampaig
         )
     }, [campaigns, filters]);
 
+    // ИСПРАВЛЕНИЕ: Защита от null в расчетах
     const summary = useMemo(() => filteredCampaigns.reduce((acc, c) => ({
-        impressions: acc.impressions + c.impressions,
-        clicks: acc.clicks + c.clicks,
-        spend: acc.spend + c.spend,
-        conversions: acc.conversions + c.conversions
+        impressions: acc.impressions + (c.impressions || 0),
+        clicks: acc.clicks + (c.clicks || 0),
+        spend: acc.spend + (c.spend || 0),
+        conversions: acc.conversions + (c.conversions || 0)
     }), {impressions: 0, clicks: 0, spend: 0, conversions: 0}), [filteredCampaigns]);
     
-    // ИСПРАВЛЕНО: теперь вызываем addCampaign (который шлет запрос в Supabase) для каждой кампании
     const handleImportSave = (importedCampaigns: Omit<AdCampaign, 'id'>[]) => {
         importedCampaigns.forEach(campaign => {
             addCampaign(campaign);
@@ -296,12 +299,13 @@ const AdCampaignsPage: React.FC<AdCampaignsPageProps> = ({ campaigns, addCampaig
                                     <td className="px-4 py-3 font-medium text-slate-900">{c.name}</td>
                                     <td className="px-4 py-3"><span className={`px-2 py-1 rounded-full text-xs font-semibold ${statusColorMap[c.status]}`}>{c.status}</span></td>
                                     <td className="px-4 py-3"><span className={`px-2 py-1 rounded-full text-xs font-semibold ${typeColorMap[c.type]}`}>{c.type}</span></td>
+                                    {/* ИСПРАВЛЕНИЕ: Добавлена защита || 0 для всех числовых полей */}
                                     <td className="px-4 py-3">{formatTenge(c.budget)}<span className="text-xs text-slate-500">/{c.budgetType}</span></td>
-                                    <td className="px-4 py-3">{c.impressions.toLocaleString()}</td>
-                                    <td className="px-4 py-3">{c.clicks.toLocaleString()}</td>
-                                    <td className="px-4 py-3">{c.ctr.toFixed(2)}%</td>
+                                    <td className="px-4 py-3">{(c.impressions || 0).toLocaleString()}</td>
+                                    <td className="px-4 py-3">{(c.clicks || 0).toLocaleString()}</td>
+                                    <td className="px-4 py-3">{(c.ctr || 0).toFixed(2)}%</td>
                                     <td className="px-4 py-3">{formatTenge(c.spend)}</td>
-                                    <td className="px-4 py-3">{c.conversions.toFixed(2)}<p className="text-xs text-slate-500">{c.conversionRate.toFixed(2)}%</p></td>
+                                    <td className="px-4 py-3">{(c.conversions || 0).toFixed(2)}<p className="text-xs text-slate-500">{(c.conversionRate || 0).toFixed(2)}%</p></td>
                                     <td className="px-4 py-3">{formatTenge(c.cpc)}</td>
                                     <td className="px-4 py-3 flex space-x-3">
                                         <button className="text-slate-400 hover:text-cyan-500">✏️</button>
