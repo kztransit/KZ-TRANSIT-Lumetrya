@@ -1,7 +1,7 @@
 import { GoogleGenAI, FunctionDeclaration } from "@google/genai";
 import { UserData } from "../types";
 
-// --- ИНСТРУМЕНТЫ ---
+// --- ИНСТРУМЕНТЫ (Определения оставлены для совместимости, но отключены в текстовом чате) ---
 export const navigationFunctionDeclaration: FunctionDeclaration = {
     name: 'navigateToPage',
     description: 'Переходит на указанную страницу приложения.',
@@ -139,8 +139,8 @@ export const getAIAssistantResponse = async (prompt: string, userData: UserData,
     const client = new GoogleGenAI({ apiKey });
     
     try {
-        // ИСПОЛЬЗУЕМ generateContent НАПРЯМУЮ (БЕЗ createChat)
-        // Это решает проблему ContentUnion
+        // ИСПОЛЬЗУЕМ generateContent НАПРЯМУЮ
+        // Оставляем только googleSearch, убираем functionDeclarations, чтобы избежать конфликта 400 Bad Request
         const response = await client.models.generateContent({
             model: "models/gemini-2.0-flash-exp",
             config: {
@@ -148,14 +148,7 @@ export const getAIAssistantResponse = async (prompt: string, userData: UserData,
                     parts: [{ text: systemInstruction }]
                 },
                 tools: [
-                    { googleSearch: {} }, 
-                    { functionDeclarations: [
-                        navigationFunctionDeclaration,
-                        createOtherReportFunctionDeclaration,
-                        updateOtherReportKpiFunctionDeclaration,
-                        createCommercialProposalFunctionDeclaration,
-                        updateCommercialProposalFunctionDeclaration
-                    ]}
+                    { googleSearch: {} } 
                 ]
             },
             contents: [
@@ -166,12 +159,8 @@ export const getAIAssistantResponse = async (prompt: string, userData: UserData,
             ]
         });
 
-        const functionCalls = response.functionCalls();
-        
-        if (functionCalls && functionCalls.length > 0) {
-            return { text: null, functionCall: functionCalls[0] };
-        }
-
+        // Так как функции отключены, здесь всегда будет null,
+        // но оставляем структуру возврата для совместимости с React-компонентом
         return { text: response.text(), functionCall: null };
         
     } catch (error: any) {
