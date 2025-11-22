@@ -171,44 +171,61 @@ const App: React.FC = () => {
         return () => { sessionRef.current?.close(); cleanupVoiceSession(); };
     }, [cleanupVoiceSession]);
 
-    const handleNavigation = (page: string) => { navigate(page); };
+    const handleNavigation = (page: string) => {
+        navigate(page);
+    };
 
-    // --- ОПТИМИЗИРОВАННАЯ СБОРКА КОНТЕКСТА (Только важное) ---
+    // --- ГЕНЕРАТОР КОНТЕКСТА 2.0 (СЖАТЫЙ И ОПТИМИЗИРОВАННЫЙ) ---
     const generateContext = (data: UserData) => {
-        const totalRevenue = data.reports.reduce((acc, r) => acc + (r.metrics?.sales || 0), 0);
         const today = new Date().toLocaleDateString('ru-RU');
+        
+        // Сжимаем данные в текст, чтобы не отправлять тяжелый JSON и не ломать соединение
+        const reportsText = data.reports.map(r => 
+            `- Отчет ${r.name} (${r.creationDate}): Продажи ${r.metrics.sales}, Лиды ${r.metrics.leads}`
+        ).join('\n');
 
-        // Берем только последние данные, чтобы не перегрузить AI
-        const recentReports = data.reports.slice(0, 5); // Последние 5 отчетов
-        const recentProposals = data.proposals.slice(0, 10); // Последние 10 КП
-        const activeCampaigns = data.campaigns.filter(c => c.status === 'Включено');
-        const recentPayments = data.payments.slice(0, 10);
+        const proposalsText = data.proposals.map(p => 
+            `- КП от ${p.date}: ${p.company || 'Клиент'} на ${p.amount} тг. Статус: ${p.status}. Направление: ${p.direction}`
+        ).join('\n');
+
+        const campaignsText = data.campaigns.map(c => 
+            `- Реклама "${c.name}": Статус ${c.status}, Расход ${c.spend}, Конверсии ${c.conversions}`
+        ).join('\n');
+
+        const paymentsText = data.payments.map(p => 
+            `- Платеж ${p.serviceName}: ${p.amount} ${p.currency}, след. оплата ${p.nextPaymentDate}`
+        ).join('\n');
 
         return `
-        СЕГОДНЯШНЯЯ ДАТА: ${today}
+        СЕГОДНЯ: ${today}
+        РОЛЬ: Старший аналитик, инженер и оператор системы Lumi для ${data.companyProfile.companyName}.
         
-        ТВОЯ РОЛЬ:
-        Ты — старший бизнес-аналитик и инженер Lumi для компании ${data.companyProfile.companyName}.
-        
-        ТВОИ ЗНАНИЯ:
-        1. БИЗНЕС: Анализ отчетов, продаж, рекомендации по росту.
-        2. ТЕХНИКА: Эксперт в РТИ (свойства резины, ГОСТы) и 3D-печати (материалы, технологии). Делай инженерные расчеты.
+        ТВОИ ВОЗМОЖНОСТИ:
+        1. 🌐 ПОИСК В ИНТЕРНЕТЕ: Используй инструмент [googleSearch], если вопрос касается внешних данных (курсы, ГОСТы, новости, факты, которых нет в базе).
+        2. 🧭 УПРАВЛЕНИЕ: Открывай разделы сайта, если просят (функция navigateToPage).
+        3. 🛠️ ИНЖЕНЕР: Консультируй по РТИ и 3D-печати (материалы, расчеты).
+        4. 📊 АНАЛИТИК: Анализируй данные, которые я дам ниже.
 
-        ПРАВИЛА ЯЗЫКА:
-        - Говори ТОЛЬКО на РУССКОМ языке.
-        - Цифры читай словами ("пять тысяч", "тенге"). Английские числа запрещены.
+        ПРАВИЛА:
+        - Язык: Только РУССКИЙ.
+        - Цифры: Читай словами.
+
+        === ДАННЫЕ КОМПАНИИ (СВОДКА) ===
+        ПРОФИЛЬ: ${JSON.stringify(data.companyProfile.details)}
+        
+        ОТЧЕТЫ (ИСТОРИЯ):
+        ${reportsText || "Нет отчетов"}
+
+        КОММЕРЧЕСКИЕ ПРЕДЛОЖЕНИЯ:
+        ${proposalsText || "Нет КП"}
+
+        РЕКЛАМА:
+        ${campaignsText || "Нет кампаний"}
+
+        ПЛАТЕЖИ И ПОДПИСКИ:
+        ${paymentsText || "Нет платежей"}
 
         СИСТЕМНАЯ ИНСТРУКЦИЯ: ${data.companyProfile.aiSystemInstruction}
-
-        === ДАННЫЕ КОМПАНИИ (ПОСЛЕДНИЕ ЗАПИСИ) ===
-        1. ПРОФИЛЬ: ${JSON.stringify(data.companyProfile.details)}
-        2. ОТЧЕТЫ (Последние 5): ${JSON.stringify(recentReports)}
-        3. КП (Последние 10): ${JSON.stringify(recentProposals)}
-        4. АКТИВНАЯ РЕКЛАМА: ${JSON.stringify(activeCampaigns)}
-        5. ПЛАТЕЖИ: ${JSON.stringify(recentPayments)}
-        6. ДРУГОЕ: ${JSON.stringify(data.otherReports)}
-        
-        СВОДКА: Выручка (все время): ${totalRevenue} тенге.
         `;
     };
 
@@ -238,21 +255,22 @@ const App: React.FC = () => {
             const fullSystemInstruction = generateContext(userData);
 
             const sessionPromise = ai.live.connect({
-                model: 'gemini-2.0-flash-exp', // Стабильная модель
+                model: 'models/gemini-2.0-flash-exp',
                 config: {
                     responseModalities: [Modality.AUDIO],
                     speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName: 'Zephyr' } } },
                     systemInstruction: fullSystemInstruction,
-                    inputAudioTranscription: {},
-                    outputAudioTranscription: {},
-                    tools: [{functionDeclarations: [navigationFunctionDeclaration, createCommercialProposalFunctionDeclaration]}],
+                    // Подключаем поиск в Google
+                    tools: [
+                        { googleSearch: {} }, 
+                        { functionDeclarations: [navigationFunctionDeclaration, createCommercialProposalFunctionDeclaration] }
+                    ],
                 },
                 callbacks: {
                     onopen: async () => {
                         const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
                         mediaStreamRef.current = stream;
 
-                        // Принудительно запускаем AudioContext
                         const AudioContextClass = window.AudioContext || (window as any).webkitAudioContext;
                         const inputContext = new AudioContextClass({ sampleRate: 16000 });
                         if (inputContext.state === 'suspended') await inputContext.resume();
@@ -269,9 +287,8 @@ const App: React.FC = () => {
                             const int16 = new Int16Array(l);
                             for (let i = 0; i < l; i++) { int16[i] = inputData[i] * 32768; }
                             const pcmBlob: Blob = { data: encode(new Uint8Array(int16.buffer)), mimeType: 'audio/pcm;rate=16000' };
-                            
                             sessionPromise.then(session => {
-                                try { session.sendRealtimeInput({ media: pcmBlob }); } catch (e) { /* Ignore */ }
+                                try { session.sendRealtimeInput({ media: pcmBlob }); } catch (e) {}
                             });
                         };
                         mediaStreamSourceRef.current.connect(scriptProcessorRef.current);
@@ -340,10 +357,12 @@ const App: React.FC = () => {
                     onclose: cleanupVoiceSession,
                     onerror: (e: any) => {
                         console.error("Live session error:", e);
-                        // ВЫВОД ОШИБКИ НА ЭКРАН
-                        if (!isVoiceControlActive) return; // Не показывать ошибку, если мы сами закрыли
-                        const msg = e.message || e.type || "Неизвестная ошибка";
-                        alert(`Ошибка соединения: ${msg}\nПопробуйте обновить страницу.`);
+                        if (!isVoiceControlActive) return;
+                        // Мягкий вывод ошибки
+                        const msg = e.message || "Разрыв соединения";
+                        if (!msg.includes("closing")) {
+                             alert(`Lumi: ${msg}. Попробуйте еще раз.`);
+                        }
                         cleanupVoiceSession();
                     },
                 }
@@ -351,7 +370,7 @@ const App: React.FC = () => {
             sessionRef.current = await sessionPromise;
         } catch (err) {
             console.error("Failed to start voice session:", err);
-            alert("Не удалось подключиться к AI. Проверьте консоль.");
+            alert("Ошибка подключения. Проверьте консоль.");
             cleanupVoiceSession();
         }
     };
