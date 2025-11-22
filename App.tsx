@@ -3,7 +3,6 @@ import { HashRouter, Routes, Route, Navigate, useNavigate } from 'react-router-d
 import { v4 as uuidv4 } from 'uuid';
 import { GoogleGenAI, LiveSession, LiveServerMessage, Modality, Blob } from "@google/genai";
 import { decode, decodeAudioData, encode } from './utils';
-// import { navigationFunctionDeclaration, ... } мы убрали, определяем всё внутри
 
 import Sidebar from './components/Sidebar';
 import DashboardPage from './pages/DashboardPage';
@@ -38,19 +37,14 @@ import {
 
 import Logo from './components/Logo';
 
-// --- ИСПРАВЛЕНИЕ: ОПРЕДЕЛЕНИЕ ИНСТРУМЕНТОВ ЧЕРЕЗ ОБЫЧНЫЕ ОБЪЕКТЫ ---
-// Мы убрали зависимость от SchemaType, чтобы избежать ошибок сборки
-
+// --- ИНСТРУМЕНТЫ (TOOLS) ---
 const navigationTool = {
     name: "navigateToPage",
-    description: "Переходит на указанную страницу приложения. Используй, когда пользователь просит открыть раздел.",
+    description: "Переходит на указанную страницу. Используй, когда пользователь просит открыть раздел.",
     parameters: {
         type: "OBJECT",
         properties: {
-            page: {
-                type: "STRING",
-                description: "URL путь (например: '/dashboard', '/reports', '/proposals', '/campaigns', '/settings', '/ai-assistant')",
-            },
+            page: { type: "STRING", description: "URL путь (например: '/dashboard', '/reports')" },
         },
         required: ["page"],
     },
@@ -58,14 +52,14 @@ const navigationTool = {
 
 const createProposalTool = {
     name: "createCommercialProposal",
-    description: "Создает новое Коммерческое Предложение (КП) в системе.",
+    description: "Создает новое Коммерческое Предложение (КП).",
     parameters: {
         type: "OBJECT",
         properties: {
-            company: { type: "STRING", description: "Название компании клиента" },
-            item: { type: "STRING", description: "Название товара или услуги (например: 'Техпластина ТМКЩ', '3D печать шестерни')" },
-            amount: { type: "NUMBER", description: "Сумма КП (число)" },
-            direction: { type: "STRING", description: "Направление: 'РТИ' или '3D'" },
+            company: { type: "STRING", description: "Клиент" },
+            item: { type: "STRING", description: "Товар" },
+            amount: { type: "NUMBER", description: "Сумма" },
+            direction: { type: "STRING", description: "РТИ или 3D" },
         },
         required: ["company", "item", "amount"],
     },
@@ -73,12 +67,12 @@ const createProposalTool = {
 
 const addMarketingIdeaTool = {
     name: "addMarketingIdea",
-    description: "Сохраняет идею для рекламной кампании или маркетинговой активности.",
+    description: "Сохраняет идею для рекламы.",
     parameters: {
         type: "OBJECT",
         properties: {
-            name: { type: "STRING", description: "Название идеи или кампании" },
-            budget: { type: "NUMBER", description: "Предполагаемый бюджет (если есть, иначе 0)" },
+            name: { type: "STRING", description: "Суть идеи" },
+            budget: { type: "NUMBER", description: "Бюджет" },
         },
         required: ["name"],
     },
@@ -86,7 +80,7 @@ const addMarketingIdeaTool = {
 
 const calculateMarginTool = {
     name: "calculateMargin",
-    description: "Рассчитывает маржинальность сделки в процентах. Полезно для оценки прибыльности КП.",
+    description: "Считает маржу.",
     parameters: {
         type: "OBJECT",
         properties: {
@@ -96,8 +90,6 @@ const calculateMarginTool = {
         required: ["costPrice", "salePrice"],
     },
 };
-
-// -------------------------------------------------------
 
 const App: React.FC = () => {
     const [userData, setUserData] = useState<UserData>(initialUserData);
@@ -110,12 +102,16 @@ const App: React.FC = () => {
     const [liveUserTranscript, setLiveUserTranscript] = useState('');
     const [liveAiTranscript, setLiveAiTranscript] = useState('');
 
+    // Refs для управления состоянием без ререндеров
     const sessionRef = useRef<LiveSession | null>(null);
     const inputAudioContextRef = useRef<AudioContext | null>(null);
     const outputAudioContextRef = useRef<AudioContext | null>(null);
     const scriptProcessorRef = useRef<ScriptProcessorNode | null>(null);
     const mediaStreamRef = useRef<MediaStream | null>(null);
     const mediaStreamSourceRef = useRef<MediaStreamAudioSourceNode | null>(null);
+    
+    // Флаг для безопасной остановки
+    const isClosingRef = useRef(false);
     
     const nextStartTimeRef = useRef(0);
     const audioSourcesRef = useRef(new Set<AudioBufferSourceNode>());
@@ -128,18 +124,13 @@ const App: React.FC = () => {
             try {
                 const data = await fetchFullUserData();
                 setUserData(data);
-            } catch (error) {
-                console.error("Ошибка загрузки:", error);
-            } finally {
-                setIsLoadingData(false);
-            }
+            } catch (error) { console.error(error); } 
+            finally { setIsLoadingData(false); }
         };
         loadData();
     }, []);
 
-    useEffect(() => {
-        document.documentElement.classList.remove('dark');
-    }, [userData.companyProfile.darkModeEnabled]);
+    useEffect(() => { document.documentElement.classList.remove('dark'); }, [userData.companyProfile.darkModeEnabled]);
 
     useEffect(() => {
         const rememberedUserJSON = localStorage.getItem('rememberedUser');
@@ -192,16 +183,34 @@ const App: React.FC = () => {
     const navigate = useNavigate();
     const handleNavigation = (page: string) => { navigate(page); };
 
+    // БЕЗОПАСНАЯ ОЧИСТКА СЕССИИ
     const cleanupVoiceSession = useCallback(() => {
-        mediaStreamRef.current?.getTracks().forEach(track => track.stop());
+        isClosingRef.current = true; // 1. Ставим флаг, что мы закрываемся
+
+        // 2. Сначала отрубаем обработчик аудио, чтобы не слать данные в мертвый сокет
         if (scriptProcessorRef.current) {
             scriptProcessorRef.current.onaudioprocess = null;
             scriptProcessorRef.current.disconnect();
         }
-        mediaStreamSourceRef.current?.disconnect();
+        if (mediaStreamSourceRef.current) {
+            mediaStreamSourceRef.current.disconnect();
+        }
+
+        // 3. Останавливаем микрофон
+        if (mediaStreamRef.current) {
+            mediaStreamRef.current.getTracks().forEach(track => track.stop());
+        }
+
+        // 4. Закрываем сокет сессии
+        if (sessionRef.current) {
+            sessionRef.current.close();
+        }
+
+        // 5. Закрываем аудио контексты
         inputAudioContextRef.current?.close().catch(() => {});
         outputAudioContextRef.current?.close().catch(() => {});
 
+        // Сброс ссылок
         mediaStreamRef.current = null;
         scriptProcessorRef.current = null;
         mediaStreamSourceRef.current = null;
@@ -214,14 +223,14 @@ const App: React.FC = () => {
         
         setIsVoiceControlActive(false);
         setVoiceStatus('idle');
+        isClosingRef.current = false; // Сброс флага
     }, []);
 
-    useEffect(() => { return () => { if(sessionRef.current) sessionRef.current.close(); cleanupVoiceSession(); }; }, [cleanupVoiceSession]);
+    useEffect(() => { return () => { cleanupVoiceSession(); }; }, [cleanupVoiceSession]);
 
     const generateContext = (data: UserData) => {
-        const today = new Date().toLocaleDateString('ru-RU', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });
-        
-        const databaseSnapshot = {
+        const today = new Date().toLocaleDateString('ru-RU');
+        const db = {
             reports: data.reports,
             proposals: data.proposals,
             campaigns: data.campaigns,
@@ -229,53 +238,24 @@ const App: React.FC = () => {
             otherReports: data.otherReports,
             links: data.links
         };
-
         return `
         SYSTEM_INSTRUCTION:
         DATE: ${today}
-        
-        IDENTITY & COMPANY:
-        - Твое имя: Lumi (Люми).
-        - Компания: ТОО "KZ TRANSIT" (Казахстан).
-        - Твои роли: Главный Инженер-технолог, Директор по маркетингу (CMO), Бизнес-аналитик.
-        
-        VOICE & LANGUAGE SETTINGS (CRITICAL):
-        - Язык: ЧИСТЫЙ РУССКИЙ (Russian).
-        - Акцент: ОТСУТСТВУЕТ. Говори как диктор центрального телевидения или профессиональный консультант.
-        - Интонация: Уверенная, спокойная, компетентная.
-        - Ответы: Лаконичные, без воды. Сначала суть, потом детали.
-
-        DOMAIN KNOWLEDGE (ТЕХНИЧЕСКАЯ ЧАСТЬ):
-        1. РТИ (Резинотехнические изделия): Ты знаешь всё про техпластины (ТМКЩ, МБС), рукава, манжеты, сырые резины, силиконы. Знаешь ГОСТы (ищи их в googleSearch).
-        2. Аддитивные технологии (3D): FDM, SLA, SLS печать. Материалы: PLA, ABS, PETG, Nylon, PEEK.
-        3. Если спрашивают технический совет — отвечай как опытный инженер.
-
-        BUSINESS & MARKETING SKILLS:
-        1. Ты анализируешь данные (см. JSON ниже). Сравнивай показатели, ищи убыточные места.
-        2. Ты помогаешь продавать. Если просят составить текст письма клиенту — диктуй идеальный продающий текст.
-        3. Ты стратег. Предлагай идеи для акций, если видишь спад продаж.
-
-        AVAILABLE TOOLS:
-        1. [googleSearch]: ДЛЯ ВНЕШНИХ ДАННЫХ. Курсы валют (KZT/USD), погода, новости, ГОСТы, конкуренты.
-        2. [navigateToPage]: Для управления интерфейсом ("Открой отчеты").
-        3. [createCommercialProposal]: Создать КП ("Создай КП для АО КазМунайГаз...").
-        4. [addMarketingIdea]: Записать идею ("Запиши идею: запустить таргет на техпластины").
-        5. [calculateMargin]: Посчитать выгоду ("Себестоимость 1000, продаем за 1500, какая маржа?").
-
-        DATABASE_ACCESS:
-        ${JSON.stringify(databaseSnapshot)}
-
-        USER_PREFERENCES:
-        ${data.companyProfile.aiSystemInstruction}
+        ROLE: Lumi, Эксперт KZ TRANSIT (Инженер РТИ/3D, Маркетолог).
+        LANG: PURE RUSSIAN (No accent).
+        DB: ${JSON.stringify(db)}
+        INSTRUCTION: ${data.companyProfile.aiSystemInstruction}
         `;
     };
 
     const handleToggleVoiceControl = async () => {
+        // Если уже активна - выключаем
         if (isVoiceControlActive) {
-            sessionRef.current?.close();
+            cleanupVoiceSession();
             return;
         }
 
+        // Сброс
         setIsVoiceControlActive(true);
         setVoiceStatus('greeting');
         setLiveUserTranscript('');
@@ -283,6 +263,7 @@ const App: React.FC = () => {
         userTranscriptRef.current = '';
         aiTranscriptRef.current = '';
         nextStartTimeRef.current = 0;
+        isClosingRef.current = false;
 
         const apiKey = import.meta.env.VITE_GOOGLE_API_KEY;
         if (!apiKey) { alert("API Key not found"); cleanupVoiceSession(); return; }
@@ -291,35 +272,23 @@ const App: React.FC = () => {
             const ai = new GoogleGenAI({ apiKey: apiKey });
             const fullContext = generateContext(userData);
 
-            // Исправленная конфигурация инструментов (any для обхода строгой типизации SDK при билде)
             const toolsArray: any[] = [
                 { googleSearch: {} },
-                { 
-                    functionDeclarations: [
-                        navigationTool, 
-                        createProposalTool,
-                        addMarketingIdeaTool,
-                        calculateMarginTool
-                    ] 
-                }
+                { functionDeclarations: [navigationTool, createProposalTool, addMarketingIdeaTool, calculateMarginTool] }
             ];
 
             const sessionPromise = ai.live.connect({
                 model: 'models/gemini-2.0-flash-exp',
                 config: {
                     responseModalities: [Modality.AUDIO],
-                    speechConfig: { 
-                        voiceConfig: { 
-                            prebuiltVoiceConfig: { 
-                                voiceName: 'Puck' 
-                            } 
-                        } 
-                    },
+                    speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName: 'Puck' } } },
                     systemInstruction: fullContext,
                     tools: toolsArray,
                 },
                 callbacks: {
                     onopen: async () => {
+                        if (isClosingRef.current) return; // Если успели закрыть пока коннектились
+
                         const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
                         mediaStreamRef.current = stream;
 
@@ -334,21 +303,33 @@ const App: React.FC = () => {
                         mediaStreamSourceRef.current = inputAudioContextRef.current.createMediaStreamSource(stream);
                         scriptProcessorRef.current = inputAudioContextRef.current.createScriptProcessor(4096, 1, 1);
                         
+                        // ВАЖНО: Безопасная отправка аудио
                         scriptProcessorRef.current.onaudioprocess = (event) => {
+                            if (isClosingRef.current || !sessionRef.current) return; // ЗАЩИТА ОТ ОШИБКИ
+
                             const inputData = event.inputBuffer.getChannelData(0);
                             const int16 = new Int16Array(inputData.length);
                             for (let i = 0; i < inputData.length; i++) { int16[i] = inputData[i] * 32768; }
+                            
                             const pcmBlob: Blob = { data: encode(new Uint8Array(int16.buffer)), mimeType: 'audio/pcm;rate=16000' };
-                            sessionPromise.then(session => {
-                                try { session.sendRealtimeInput({ media: pcmBlob }); } catch (e) {}
-                            });
+                            
+                            // Пытаемся отправить, ловим ошибку если сокет закрылся внезапно
+                            try {
+                                sessionRef.current.sendRealtimeInput({ media: pcmBlob });
+                            } catch (e) {
+                                // Игнорируем ошибки отправки в закрытый сокет
+                                console.warn("Socket send missed"); 
+                            }
                         };
+                        
                         mediaStreamSourceRef.current.connect(scriptProcessorRef.current);
                         scriptProcessorRef.current.connect(inputAudioContextRef.current.destination);
 
                         setVoiceStatus('listening');
                     },
                     onmessage: async (message: LiveServerMessage) => {
+                        if (isClosingRef.current) return;
+
                         if (message.serverContent?.outputTranscription) {
                             setVoiceStatus('speaking');
                             aiTranscriptRef.current += message.serverContent.outputTranscription.text;
@@ -361,69 +342,53 @@ const App: React.FC = () => {
                         
                         if (message.toolCall) {
                             const functionResponses: any[] = [];
-                            
                             for (const fc of message.toolCall.functionCalls) {
-                                let result: any = { result: "Команда принята." };
-                                
+                                let result: any = { result: "Ok" };
                                 try {
                                     if (fc.name === 'navigateToPage' && fc.args.page) {
                                        handleNavigation(fc.args.page as string);
-                                       result = { result: `ОК. Открываю: ${fc.args.page}` };
+                                       result = { result: `Открыто: ${fc.args.page}` };
                                     } 
                                     else if (fc.name === 'createCommercialProposal') {
-                                       const { company, item, amount, direction } = fc.args as any;
-                                       let normalizedDirection: 'РТИ' | '3D' = 'РТИ';
-                                       if (typeof direction === 'string' && direction.toUpperCase().includes('3D')) normalizedDirection = '3D';
-                                       
-                                       crudFunctions.addProposal({
+                                        const { company, item, amount, direction } = fc.args as any;
+                                        let normDir: 'РТИ' | '3D' = (direction && direction.includes('3D')) ? '3D' : 'РТИ';
+                                        crudFunctions.addProposal({
                                            date: new Date().toISOString().split('T')[0],
-                                           direction: normalizedDirection,
+                                           direction: normDir,
                                            proposalNumber: `КП-${Math.floor(10000 + Math.random() * 90000)}`,
-                                           company: company, item: item, amount: amount, 
-                                           status: 'Ожидание', invoiceNumber: null, invoiceDate: null, paymentDate: null, paymentType: null,
-                                       });
-                                       result = { result: `КП для ${company} на сумму ${amount} создано успешно.` };
+                                           company, item, amount, status: 'Ожидание', invoiceNumber: null, invoiceDate: null, paymentDate: null, paymentType: null,
+                                        });
+                                        result = { result: "КП создано" };
                                     }
                                     else if (fc.name === 'addMarketingIdea') {
                                         const { name, budget } = fc.args as any;
-                                        crudFunctions.addCampaign({
-                                            name: name, status: 'Черновик', spend: budget || 0, clicks: 0, leads: 0, sales: 0
-                                        });
-                                        result = { result: `Идея "${name}" записана в рекламные кампании как черновик.` };
+                                        crudFunctions.addCampaign({ name, status: 'Черновик', spend: budget || 0, clicks: 0, leads: 0, sales: 0 });
+                                        result = { result: "Идея сохранена" };
                                     }
                                     else if (fc.name === 'calculateMargin') {
                                         const { costPrice, salePrice } = fc.args as any;
-                                        if (salePrice > 0) {
-                                            const margin = ((salePrice - costPrice) / salePrice) * 100;
-                                            const profit = salePrice - costPrice;
-                                            result = { result: `Прибыль: ${profit}. Маржинальность: ${margin.toFixed(2)}%.` };
-                                        } else {
-                                            result = { result: "Ошибка: Цена продажи должна быть больше нуля." };
-                                        }
+                                        result = { result: `Маржа: ${(((salePrice-costPrice)/salePrice)*100).toFixed(1)}%` };
                                     }
-                                } catch (e) {
-                                    console.error("Tool Error:", e);
-                                    result = { error: "Не удалось выполнить действие." };
-                                }
-
-                                functionResponses.push({
-                                    id: fc.id,
-                                    name: fc.name,
-                                    response: result
-                                });
+                                } catch(e) { result = { error: "Fail" }; }
+                                functionResponses.push({ id: fc.id, name: fc.name, response: result });
                             }
-
-                            if (functionResponses.length > 0) {
-                                sessionPromise.then((session) => {
-                                   session.sendToolResponse({ functionResponses });
-                                });
+                            if (functionResponses.length > 0 && !isClosingRef.current) {
+                                try {
+                                    sessionRef.current?.sendToolResponse({ functionResponses });
+                                } catch(e) { console.warn("Tool response failed"); }
                             }
                         }
                         
                         if (message.serverContent?.turnComplete) {
                             userTranscriptRef.current = '';
                             aiTranscriptRef.current = '';
-                            setTimeout(() => { setLiveUserTranscript(''); setLiveAiTranscript(''); setVoiceStatus('listening'); }, 2000);
+                            setTimeout(() => { 
+                                if(!isClosingRef.current) {
+                                    setLiveUserTranscript(''); 
+                                    setLiveAiTranscript(''); 
+                                    setVoiceStatus('listening'); 
+                                }
+                            }, 2000);
                         }
                         
                         const modelTurn = message.serverContent?.modelTurn;
@@ -446,20 +411,23 @@ const App: React.FC = () => {
                             }
                         }
                     },
-                    onclose: cleanupVoiceSession,
+                    onclose: () => {
+                        // Обработка закрытия со стороны сервера
+                        if (!isClosingRef.current) cleanupVoiceSession();
+                    },
                     onerror: (e: any) => {
-                        console.error("Lumi Connection Error:", e);
-                        if (isVoiceControlActive && !e.message?.includes("closing")) {
-                           // console.log("Переподключение...");
-                        }
-                        cleanupVoiceSession();
+                        console.log("Session Error (safe to ignore if closing):", e);
+                        if (!isClosingRef.current) cleanupVoiceSession();
                     },
                 }
             });
-            sessionRef.current = await sessionPromise;
+            
+            const session = await sessionPromise;
+            sessionRef.current = session; // Присваиваем реф ТОЛЬКО когда промис выполнился
+
         } catch (err) {
-            console.error(err);
-            alert("Не удалось подключиться. Проверьте соединение.");
+            console.error("Connection failed", err);
+            alert("Ошибка подключения. Попробуйте снова.");
             cleanupVoiceSession();
         }
     };
@@ -476,7 +444,7 @@ const App: React.FC = () => {
                         <Routes>
                             <Route path="/" element={<Navigate to="/dashboard" replace />} />
                             <Route path="/dashboard" element={<DashboardPage reports={userData.reports} proposals={userData.proposals}/>} />
-                            <Route path="/ai-assistant" element={<AIAssistantPage userData={userData} addReport={crudFunctions.addReport} addMultipleProposals={crudFunctions.addMultipleProposals} addMultipleCampaigns={crudFunctions.addMultipleCampaigns} addOtherReport={crudFunctions.addOtherReport} updateOtherReport={crudFunctions.updateOtherReport} addProposal={crudFunctions.addProposal} updateProposal={crudFunctions.updateProposal} isGlobalVoiceActive={isVoiceControlActive} onDisableGlobalVoice={() => sessionRef.current?.close()} />} />
+                            <Route path="/ai-assistant" element={<AIAssistantPage userData={userData} addReport={crudFunctions.addReport} addMultipleProposals={crudFunctions.addMultipleProposals} addMultipleCampaigns={crudFunctions.addMultipleCampaigns} addOtherReport={crudFunctions.addOtherReport} updateOtherReport={crudFunctions.updateOtherReport} addProposal={crudFunctions.addProposal} updateProposal={crudFunctions.updateProposal} isGlobalVoiceActive={isVoiceControlActive} onDisableGlobalVoice={() => cleanupVoiceSession()} />} />
                             <Route path="/reports" element={<ReportsPage reports={userData.reports} addReport={crudFunctions.addReport} deleteReport={crudFunctions.deleteReport} updateReport={crudFunctions.updateReport} />} />
                             <Route path="/other-reports" element={<OtherReportsPage reports={userData.otherReports} addReport={crudFunctions.addOtherReport} updateReport={crudFunctions.updateOtherReport} deleteReport={crudFunctions.deleteOtherReport} />} />
                             <Route path="/proposals" element={<CommercialProposalsPage proposals={userData.proposals} addProposal={crudFunctions.addProposal} deleteProposal={crudFunctions.deleteProposal} setProposals={crudFunctions.setProposals} updateProposal={crudFunctions.updateProposal} />} />
@@ -492,7 +460,7 @@ const App: React.FC = () => {
                         </Routes>
                     </main>
                 </div>
-                {isVoiceControlActive && <VoiceAssistantOverlay status={voiceStatus} userTranscript={liveUserTranscript} aiTranscript={liveAiTranscript} onClose={() => sessionRef.current?.close()} />}
+                {isVoiceControlActive && <VoiceAssistantOverlay status={voiceStatus} userTranscript={liveUserTranscript} aiTranscript={liveAiTranscript} onClose={handleToggleVoiceControl} />}
             </div>
     );
 };
