@@ -25,8 +25,7 @@ import { initialUserData, mockUser } from './services/mockData';
 import { User, UserData, Report, CommercialProposal, AdCampaign, Link, StoredFile, CompanyProfile, Payment, OtherReport } from './types';
 
 import { 
-  fetchFullUserData, 
-  apiAddReport, apiUpdateReport, apiDeleteReport,
+  fetchFullUserData, apiAddReport, apiUpdateReport, apiDeleteReport,
   apiAddProposal, apiUpdateProposal, apiDeleteProposal,
   apiAddCampaign, apiDeleteCampaign,
   apiAddOtherReport, apiUpdateOtherReport, apiDeleteOtherReport,
@@ -113,30 +112,31 @@ const App: React.FC = () => {
         localStorage.removeItem('rememberedUser');
     }, []);
     
+    // CRUD Functions
     const crudFunctions = useMemo(() => ({
-        setReports: (updater: Report[] | ((prevReports: Report[]) => Report[])) => { setUserData(prev => ({ ...prev, reports: typeof updater === 'function' ? updater(prev.reports) : updater })); },
-        addReport: async (report: Omit<Report, 'id'>) => { const newReport = { ...report, id: uuidv4() }; await apiAddReport(newReport); setUserData(prev => ({ ...prev, reports: [newReport, ...prev.reports] })); },
-        updateReport: async (updatedReport: Report) => { await apiUpdateReport(updatedReport); setUserData(prev => ({ ...prev, reports: prev.reports.map(r => r.id === updatedReport.id ? updatedReport : r) })); },
-        deleteReport: async (id: string) => { await apiDeleteReport(id); setUserData(prev => ({ ...prev, reports: prev.reports.filter(r => r.id !== id) })); },
-        addOtherReport: async (report: Omit<OtherReport, 'id'>) => { const newReport = { ...report, id: uuidv4() }; await apiAddOtherReport(newReport); setUserData(prev => ({ ...prev, otherReports: [newReport, ...prev.otherReports].sort((a,b) => new Date(b.date).getTime() - new Date(a.date).getTime()) })); },
-        updateOtherReport: async (updatedReport: OtherReport) => { await apiUpdateOtherReport(updatedReport); setUserData(prev => ({ ...prev, otherReports: prev.otherReports.map(r => r.id === updatedReport.id ? updatedReport : r).sort((a,b) => new Date(b.date).getTime() - new Date(a.date).getTime()) })); },
-        deleteOtherReport: async (id: string) => { await apiDeleteOtherReport(id); setUserData(prev => ({ ...prev, otherReports: prev.otherReports.filter(r => r.id !== id) })); },
-        setProposals: (updater: CommercialProposal[] | ((prevProposals: CommercialProposal[]) => CommercialProposal[])) => { setUserData(prev => ({ ...prev, proposals: typeof updater === 'function' ? updater(prev.proposals) : updater })); },
-        addProposal: async (proposal: Omit<CommercialProposal, 'id'>) => { const newProposal = { ...proposal, id: uuidv4() }; await apiAddProposal(newProposal); setUserData(prev => ({ ...prev, proposals: [newProposal, ...prev.proposals] })); },
-        updateProposal: async (updatedProposal: CommercialProposal) => { await apiUpdateProposal(updatedProposal); setUserData(prev => ({ ...prev, proposals: prev.proposals.map(p => p.id === updatedProposal.id ? updatedProposal : p) })); },
-        addMultipleProposals: async (proposals: Omit<CommercialProposal, 'id'>[]) => { const newProposals = proposals.map(p => ({ ...p, id: uuidv4() })); for (const p of newProposals) await apiAddProposal(p); setUserData(prev => ({ ...prev, proposals: [...newProposals, ...prev.proposals] })); },
-        deleteProposal: async (id: string) => { await apiDeleteProposal(id); setUserData(prev => ({ ...prev, proposals: prev.proposals.filter(p => p.id !== id) })); },
-        setCampaigns: (updater: AdCampaign[] | ((prevCampaigns: AdCampaign[]) => AdCampaign[])) => { setUserData(prev => ({ ...prev, campaigns: typeof updater === 'function' ? updater(prev.campaigns) : updater })); },
-        addCampaign: async (campaign: Omit<AdCampaign, 'id'>) => { const newCampaign = { ...campaign, id: uuidv4() }; await apiAddCampaign(newCampaign); setUserData(prev => ({ ...prev, campaigns: [newCampaign, ...prev.campaigns] })); },
-        addMultipleCampaigns: async (campaigns: Omit<AdCampaign, 'id'>[]) => { const newCampaigns = campaigns.map(c => ({ ...c, id: uuidv4() })); for (const c of newCampaigns) await apiAddCampaign(c); setUserData(prev => ({ ...prev, campaigns: [...newCampaigns, ...prev.campaigns] })); },
-        deleteCampaign: async (id: string) => { await apiDeleteCampaign(id); setUserData(prev => ({ ...prev, campaigns: prev.campaigns.filter(c => c.id !== id) })); },
-        addLink: async (link: Omit<Link, 'id'>) => { const newLink = { ...link, id: uuidv4() }; await apiAddLink(newLink); setUserData(prev => ({ ...prev, links: [newLink, ...prev.links] })); },
-        deleteLink: async (id: string) => { await apiDeleteLink(id); setUserData(prev => ({ ...prev, links: prev.links.filter(l => l.id !== id) })); },
-        addFile: async (fileData: Omit<StoredFile, 'id'>) => { const newFile = { ...fileData, id: uuidv4() }; await apiAddFile(newFile); setUserData(prev => ({ ...prev, files: [newFile, ...prev.files] })); return newFile; },
-        deleteFile: async (id: string) => { await apiDeleteFile(id); setUserData(prev => ({ ...prev, files: prev.files.filter(f => f.id !== id) })); },
-        addPayment: async (payment: Omit<Payment, 'id'>) => { const newPayment = { ...payment, id: uuidv4() }; await apiAddPayment(newPayment); setUserData(prev => ({ ...prev, payments: [newPayment, ...prev.payments].sort((a, b) => new Date(a.nextPaymentDate).getTime() - new Date(b.nextPaymentDate).getTime()) })); },
-        updatePayment: async (updatedPayment: Payment) => { await apiUpdatePayment(updatedPayment); setUserData(prev => ({ ...prev, payments: prev.payments.map(p => p.id === updatedPayment.id ? updatedPayment : p).sort((a, b) => new Date(a.nextPaymentDate).getTime() - new Date(b.nextPaymentDate).getTime()) })); },
-        deletePayment: async (id: string) => { await apiDeletePayment(id); setUserData(prev => ({ ...prev, payments: prev.payments.filter(p => p.id !== id) })); },
+        setReports: (updater: any) => setUserData(prev => ({ ...prev, reports: typeof updater === 'function' ? updater(prev.reports) : updater })),
+        addReport: async (item: any) => { const newItem = { ...item, id: uuidv4() }; await apiAddReport(newItem); setUserData(prev => ({ ...prev, reports: [newItem, ...prev.reports] })); },
+        updateReport: async (item: any) => { await apiUpdateReport(item); setUserData(prev => ({ ...prev, reports: prev.reports.map(i => i.id === item.id ? item : i) })); },
+        deleteReport: async (id: string) => { await apiDeleteReport(id); setUserData(prev => ({ ...prev, reports: prev.reports.filter(i => i.id !== id) })); },
+        addOtherReport: async (item: any) => { const newItem = { ...item, id: uuidv4() }; await apiAddOtherReport(newItem); setUserData(prev => ({ ...prev, otherReports: [newItem, ...prev.otherReports] })); },
+        updateOtherReport: async (item: any) => { await apiUpdateOtherReport(item); setUserData(prev => ({ ...prev, otherReports: prev.otherReports.map(i => i.id === item.id ? item : i) })); },
+        deleteOtherReport: async (id: string) => { await apiDeleteOtherReport(id); setUserData(prev => ({ ...prev, otherReports: prev.otherReports.filter(i => i.id !== id) })); },
+        setProposals: (updater: any) => setUserData(prev => ({ ...prev, proposals: typeof updater === 'function' ? updater(prev.proposals) : updater })),
+        addProposal: async (item: any) => { const newItem = { ...item, id: uuidv4() }; await apiAddProposal(newItem); setUserData(prev => ({ ...prev, proposals: [newItem, ...prev.proposals] })); },
+        updateProposal: async (item: any) => { await apiUpdateProposal(item); setUserData(prev => ({ ...prev, proposals: prev.proposals.map(i => i.id === item.id ? item : i) })); },
+        addMultipleProposals: async (items: any[]) => { const newItems = items.map(i => ({ ...i, id: uuidv4() })); for(const i of newItems) await apiAddProposal(i); setUserData(prev => ({ ...prev, proposals: [...newItems, ...prev.proposals] })); },
+        deleteProposal: async (id: string) => { await apiDeleteProposal(id); setUserData(prev => ({ ...prev, proposals: prev.proposals.filter(i => i.id !== id) })); },
+        setCampaigns: (updater: any) => setUserData(prev => ({ ...prev, campaigns: typeof updater === 'function' ? updater(prev.campaigns) : updater })),
+        addCampaign: async (item: any) => { const newItem = { ...item, id: uuidv4() }; await apiAddCampaign(newItem); setUserData(prev => ({ ...prev, campaigns: [newItem, ...prev.campaigns] })); },
+        addMultipleCampaigns: async (items: any[]) => { const newItems = items.map(i => ({ ...i, id: uuidv4() })); for(const i of newItems) await apiAddCampaign(i); setUserData(prev => ({ ...prev, campaigns: [...newItems, ...prev.campaigns] })); },
+        deleteCampaign: async (id: string) => { await apiDeleteCampaign(id); setUserData(prev => ({ ...prev, campaigns: prev.campaigns.filter(i => i.id !== id) })); },
+        addLink: async (item: any) => { const newItem = { ...item, id: uuidv4() }; await apiAddLink(newItem); setUserData(prev => ({ ...prev, links: [newItem, ...prev.links] })); },
+        deleteLink: async (id: string) => { await apiDeleteLink(id); setUserData(prev => ({ ...prev, links: prev.links.filter(i => i.id !== id) })); },
+        addFile: async (item: any) => { const newItem = { ...item, id: uuidv4() }; await apiAddFile(newItem); setUserData(prev => ({ ...prev, files: [newItem, ...prev.files] })); return newItem; },
+        deleteFile: async (id: string) => { await apiDeleteFile(id); setUserData(prev => ({ ...prev, files: prev.files.filter(i => i.id !== id) })); },
+        addPayment: async (item: any) => { const newItem = { ...item, id: uuidv4() }; await apiAddPayment(newItem); setUserData(prev => ({ ...prev, payments: [newItem, ...prev.payments] })); },
+        updatePayment: async (item: any) => { await apiUpdatePayment(item); setUserData(prev => ({ ...prev, payments: prev.payments.map(i => i.id === item.id ? item : i) })); },
+        deletePayment: async (id: string) => { await apiDeletePayment(id); setUserData(prev => ({ ...prev, payments: prev.payments.filter(i => i.id !== id) })); },
         setCompanyProfile: async (profile: CompanyProfile) => { await apiUpdateCompanyProfile(profile); setUserData(prev => ({ ...prev, companyProfile: profile })); },
         setAllUserData: (data: UserData) => { setUserData(data); },
     }), []);
@@ -175,57 +175,38 @@ const App: React.FC = () => {
         navigate(page);
     };
 
-    // --- ГЕНЕРАТОР КОНТЕКСТА 2.0 (СЖАТЫЙ И ОПТИМИЗИРОВАННЫЙ) ---
+    // --- ОПТИМИЗИРОВАННЫЙ ГЕНЕРАТОР КОНТЕКСТА (СЖАТЫЙ ФОРМАТ ДЛЯ СТАБИЛЬНОСТИ) ---
     const generateContext = (data: UserData) => {
         const today = new Date().toLocaleDateString('ru-RU');
         
-        // Сжимаем данные в текст, чтобы не отправлять тяжелый JSON и не ломать соединение
-        const reportsText = data.reports.map(r => 
-            `- Отчет ${r.name} (${r.creationDate}): Продажи ${r.metrics.sales}, Лиды ${r.metrics.leads}`
-        ).join('\n');
-
-        const proposalsText = data.proposals.map(p => 
-            `- КП от ${p.date}: ${p.company || 'Клиент'} на ${p.amount} тг. Статус: ${p.status}. Направление: ${p.direction}`
-        ).join('\n');
-
-        const campaignsText = data.campaigns.map(c => 
-            `- Реклама "${c.name}": Статус ${c.status}, Расход ${c.spend}, Конверсии ${c.conversions}`
-        ).join('\n');
-
-        const paymentsText = data.payments.map(p => 
-            `- Платеж ${p.serviceName}: ${p.amount} ${p.currency}, след. оплата ${p.nextPaymentDate}`
-        ).join('\n');
+        // Превращаем тяжелые объекты в компактные строки
+        const reports = data.reports.map(r => `OTCHET[${r.name}|${r.creationDate}]:Sale=${r.metrics.sales},Lead=${r.metrics.leads},Bud=${r.metrics.budget}`).join(';');
+        const props = data.proposals.map(p => `KP[${p.company}|${p.amount}|${p.status}|${p.date}]`).join(';');
+        const camps = data.campaigns.map(c => `ADS[${c.name}|${c.status}|Bud=${c.budget}|Spend=${c.spend}]`).join(';');
+        const pays = data.payments.map(p => `PAY[${p.serviceName}|${p.amount}|${p.nextPaymentDate}]`).join(';');
 
         return `
-        СЕГОДНЯ: ${today}
-        РОЛЬ: Старший аналитик, инженер и оператор системы Lumi для ${data.companyProfile.companyName}.
+        DATA:${today}
+        ROLE:Lumi,BusinessAnalyst,Engineer,Operator for ${data.companyProfile.companyName}.
+        LANG:RUSSIAN ONLY. Digits as words.
         
-        ТВОИ ВОЗМОЖНОСТИ:
-        1. 🌐 ПОИСК В ИНТЕРНЕТЕ: Используй инструмент [googleSearch], если вопрос касается внешних данных (курсы, ГОСТы, новости, факты, которых нет в базе).
-        2. 🧭 УПРАВЛЕНИЕ: Открывай разделы сайта, если просят (функция navigateToPage).
-        3. 🛠️ ИНЖЕНЕР: Консультируй по РТИ и 3D-печати (материалы, расчеты).
-        4. 📊 АНАЛИТИК: Анализируй данные, которые я дам ниже.
-
-        ПРАВИЛА:
-        - Язык: Только РУССКИЙ.
-        - Цифры: Читай словами.
-
-        === ДАННЫЕ КОМПАНИИ (СВОДКА) ===
-        ПРОФИЛЬ: ${JSON.stringify(data.companyProfile.details)}
+        TOOLS:
+        1.[googleSearch]: For news, rates, laws, specs, facts.
+        2.[navigateToPage]: For site navigation (/dashboard,/reports,/proposals...).
+        3.[createCommercialProposal]: Create KP.
         
-        ОТЧЕТЫ (ИСТОРИЯ):
-        ${reportsText || "Нет отчетов"}
-
-        КОММЕРЧЕСКИЕ ПРЕДЛОЖЕНИЯ:
-        ${proposalsText || "Нет КП"}
-
-        РЕКЛАМА:
-        ${campaignsText || "Нет кампаний"}
-
-        ПЛАТЕЖИ И ПОДПИСКИ:
-        ${paymentsText || "Нет платежей"}
-
-        СИСТЕМНАЯ ИНСТРУКЦИЯ: ${data.companyProfile.aiSystemInstruction}
+        RULES:
+        - Voice: Short answers (1-2 sentences). Detailed only if asked.
+        - Stop cmd: Silence immediately.
+        - Engineer: Expert in RTI/3D.
+        
+        DB_SNAPSHOT:
+        PROFILE:${JSON.stringify(data.companyProfile.details)}
+        REPORTS:${reports}
+        PROPOSALS:${props}
+        CAMPAIGNS:${camps}
+        PAYMENTS:${pays}
+        INSTRUCTION:${data.companyProfile.aiSystemInstruction}
         `;
     };
 
@@ -260,9 +241,10 @@ const App: React.FC = () => {
                     responseModalities: [Modality.AUDIO],
                     speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName: 'Zephyr' } } },
                     systemInstruction: fullSystemInstruction,
-                    // Подключаем поиск в Google
+                    inputAudioTranscription: {},
+                    outputAudioTranscription: {},
                     tools: [
-                        { googleSearch: {} }, 
+                        { googleSearch: {} }, // ИНТЕРНЕТ ПОДКЛЮЧЕН
                         { functionDeclarations: [navigationFunctionDeclaration, createCommercialProposalFunctionDeclaration] }
                     ],
                 },
@@ -311,7 +293,7 @@ const App: React.FC = () => {
                                 let functionResult = "Действие выполнено.";
                                 if (fc.name === 'navigateToPage' && fc.args.page) {
                                    handleNavigation(fc.args.page as string);
-                                   functionResult = `Переход на страницу ${fc.args.page} выполнен.`;
+                                   functionResult = `Перехожу на страницу ${fc.args.page}`;
                                 }
                                 if (fc.name === 'createCommercialProposal') {
                                    const { company, item, amount, direction, date } = fc.args as any;
@@ -323,7 +305,7 @@ const App: React.FC = () => {
                                        proposalNumber: `КП-${Math.floor(10000 + Math.random() * 90000)}`,
                                        company: company, item: item, amount: amount, status: 'Ожидание', invoiceNumber: null, invoiceDate: null, paymentDate: null, paymentType: null,
                                    });
-                                   functionResult = `Коммерческое предложение для компании ${company} успешно создано.`;
+                                   functionResult = `КП для ${company} создано.`;
                                 }
                                 sessionPromise.then((session) => {
                                    session.sendToolResponse({ functionResponses: { id: fc.id, name: fc.name, response: { result: functionResult } } });
@@ -358,11 +340,8 @@ const App: React.FC = () => {
                     onerror: (e: any) => {
                         console.error("Live session error:", e);
                         if (!isVoiceControlActive) return;
-                        // Мягкий вывод ошибки
-                        const msg = e.message || "Разрыв соединения";
-                        if (!msg.includes("closing")) {
-                             alert(`Lumi: ${msg}. Попробуйте еще раз.`);
-                        }
+                        const msg = e.message || e.type || "Неизвестная ошибка";
+                        if (!msg.includes("closing")) alert(`Сбой соединения: ${msg}`);
                         cleanupVoiceSession();
                     },
                 }
@@ -370,7 +349,7 @@ const App: React.FC = () => {
             sessionRef.current = await sessionPromise;
         } catch (err) {
             console.error("Failed to start voice session:", err);
-            alert("Ошибка подключения. Проверьте консоль.");
+            alert("Не удалось подключиться. Проверьте консоль.");
             cleanupVoiceSession();
         }
     };
