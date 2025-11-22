@@ -1,16 +1,15 @@
-
 import React, {useState, useMemo} from 'react';
 import DashboardCard from '../components/DashboardCard';
 import { ResponsiveContainer, BarChart, Bar, PieChart, Pie, Cell, XAxis, YAxis, CartesianGrid, Tooltip, Legend, Funnel, FunnelChart, LabelList, ScatterChart, Scatter } from 'recharts';
 import { CommercialProposal, Report } from '../types';
-import { analyzeDataConsistency } from '../services/geminiService';
+import { analyzeDataConsistency } from '../services/geminiService'; // Теперь этот импорт сработает!
 
 interface DashboardPageProps {
     reports: Report[];
     proposals: CommercialProposal[];
 }
 
-const COLORS = ['#2563eb', '#16a34a', '#9333ea', '#f59e0b']; // blue, green, purple, amber
+const COLORS = ['#2563eb', '#16a34a', '#9333ea', '#f59e0b'];
 
 const formatCurrency = (value: number) => `₸${(value / 1000000).toFixed(2)}M`;
 const formatNumber = (value: number) => new Intl.NumberFormat('ru-RU').format(Math.round(value));
@@ -107,20 +106,19 @@ const DashboardPage: React.FC<DashboardPageProps> = ({ reports, proposals }) => 
                 metrics: r.directions?.[filters.direction] || { budget: 0, clicks: 0, leads: 0, proposals: 0, invoices: 0, deals: 0, sales: 0 }
             }));
         
-        const totalSales = reportsToUse.reduce((sum, r) => sum + r.metrics.sales, 0);
-        const totalDeals = reportsToUse.reduce((sum, r) => sum + r.metrics.deals, 0);
-        const totalBudget = reportsToUse.reduce((sum, r) => sum + r.metrics.budget, 0);
-        const totalLeads = reportsToUse.reduce((sum, r) => sum + r.metrics.leads, 0);
-        const totalClicks = reportsToUse.reduce((sum, r) => sum + r.metrics.clicks, 0);
-        const totalProposalsFromReports = reportsToUse.reduce((sum, r) => sum + r.metrics.proposals, 0);
-        const totalInvoicesFromReports = reportsToUse.reduce((sum, r) => sum + r.metrics.invoices, 0);
+        const totalSales = reportsToUse.reduce((sum, r) => sum + (r.metrics?.sales || 0), 0);
+        const totalDeals = reportsToUse.reduce((sum, r) => sum + (r.metrics?.deals || 0), 0);
+        const totalBudget = reportsToUse.reduce((sum, r) => sum + (r.metrics?.budget || 0), 0);
+        const totalLeads = reportsToUse.reduce((sum, r) => sum + (r.metrics?.leads || 0), 0);
+        const totalClicks = reportsToUse.reduce((sum, r) => sum + (r.metrics?.clicks || 0), 0);
+        const totalProposalsFromReports = reportsToUse.reduce((sum, r) => sum + (r.metrics?.proposals || 0), 0);
+        const totalInvoicesFromReports = reportsToUse.reduce((sum, r) => sum + (r.metrics?.invoices || 0), 0);
         
         const calculateConversion = (from: number, to: number) => (from > 0 ? (to / from) * 100 : 0);
 
         const costPerProposal = totalProposalsFromReports > 0 ? totalBudget / totalProposalsFromReports : 0;
         const costPerInvoice = totalInvoicesFromReports > 0 ? totalBudget / totalInvoicesFromReports : 0;
         const costPerDeal = totalDeals > 0 ? totalBudget / totalDeals : 0;
-
 
         return {
             totalBudget,
@@ -137,10 +135,10 @@ const DashboardPage: React.FC<DashboardPageProps> = ({ reports, proposals }) => 
             costPerDeal,
             
             kpiTrends: {
-                budget: reportsToUse.slice(-6).map(r => ({value: r.metrics.budget})),
-                leads: reportsToUse.slice(-6).map(r => ({value: r.metrics.leads})),
-                revenue: reportsToUse.slice(-6).map(r => ({value: r.metrics.sales})),
-                deals: reportsToUse.slice(-6).map(r => ({value: r.metrics.deals})),
+                budget: reportsToUse.slice(-6).map(r => ({value: r.metrics?.budget || 0})),
+                leads: reportsToUse.slice(-6).map(r => ({value: r.metrics?.leads || 0})),
+                revenue: reportsToUse.slice(-6).map(r => ({value: r.metrics?.sales || 0})),
+                deals: reportsToUse.slice(-6).map(r => ({value: r.metrics?.deals || 0})),
             },
             
             funnelData: [
@@ -163,8 +161,8 @@ const DashboardPage: React.FC<DashboardPageProps> = ({ reports, proposals }) => 
             
             revenueBudgetDynamics: reportsToUse.slice(-12).map(r => ({ 
                 name: r.name.split(' ').slice(-2)[0].substring(0,3),
-                'Выручка': r.metrics.sales, 
-                'Бюджет': r.metrics.budget
+                'Выручка': r.metrics?.sales || 0, 
+                'Бюджет': r.metrics?.budget || 0
             })),
 
             keyConversions: [
@@ -192,8 +190,8 @@ const DashboardPage: React.FC<DashboardPageProps> = ({ reports, proposals }) => 
         try {
             const result = await analyzeDataConsistency(filteredReports);
             setAnalysisResult(result);
-        } catch (error) {
-            setAnalysisResult("Произошла ошибка при анализе данных.");
+        } catch (error: any) {
+            setAnalysisResult(`Ошибка: ${error.message || "Неизвестная ошибка"}`);
         } finally {
             setIsAnalyzing(false);
         }
@@ -381,16 +379,19 @@ const DashboardPage: React.FC<DashboardPageProps> = ({ reports, proposals }) => 
                      </thead>
                      <tbody>
                         {filteredReports.slice(-12).reverse().map(r => {
-                            const cpl = r.metrics.leads > 0 ? r.metrics.budget / r.metrics.leads : 0;
-                            const roi = r.metrics.budget > 0 ? (r.metrics.sales - r.metrics.budget) / r.metrics.budget * 100 : 0;
+                            const sales = r.metrics?.sales || 0;
+                            const budget = r.metrics?.budget || 0;
+                            const leads = r.metrics?.leads || 0;
+                            const cpl = leads > 0 ? budget / leads : 0;
+                            const roi = budget > 0 ? (sales - budget) / budget * 100 : 0;
                             return (
                                 <tr key={r.id} className="border-b border-gray-200">
                                     <td className="px-4 py-3 font-medium text-slate-900">{r.name.replace('Отчет ','')}</td>
-                                    <td className="px-4 py-3">{formatTenge(r.metrics.budget)}</td>
-                                    <td className="px-4 py-3">{formatNumber(r.metrics.clicks)}</td>
-                                    <td className="px-4 py-3">{formatNumber(r.metrics.leads)}</td>
-                                    <td className="px-4 py-3">{formatNumber(r.metrics.deals)}</td>
-                                    <td className="px-4 py-3">{formatTenge(r.metrics.sales)}</td>
+                                    <td className="px-4 py-3">{formatTenge(budget)}</td>
+                                    <td className="px-4 py-3">{formatNumber(r.metrics?.clicks || 0)}</td>
+                                    <td className="px-4 py-3">{formatNumber(leads)}</td>
+                                    <td className="px-4 py-3">{formatNumber(r.metrics?.deals || 0)}</td>
+                                    <td className="px-4 py-3">{formatTenge(sales)}</td>
                                     <td className="px-4 py-3">{formatTenge(cpl)}</td>
                                     <td className={`px-4 py-3 font-semibold ${roi >= 0 ? 'text-green-600' : 'text-red-600'}`}>{roi.toFixed(1)}%</td>
                                 </tr>
