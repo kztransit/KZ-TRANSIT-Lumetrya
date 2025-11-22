@@ -1,9 +1,10 @@
 import React, { useState, useCallback, useMemo, useEffect, useRef } from 'react';
 import { HashRouter, Routes, Route, Navigate, useNavigate } from 'react-router-dom';
 import { v4 as uuidv4 } from 'uuid';
-import { GoogleGenAI, LiveSession, LiveServerMessage, Modality, Blob } from "@google/genai";
+import { GoogleGenAI, LiveSession, LiveServerMessage, Modality, Blob, Tool, FunctionDeclaration, SchemaType } from "@google/genai";
 import { decode, decodeAudioData, encode } from './utils';
-import { navigationFunctionDeclaration, createCommercialProposalFunctionDeclaration } from './services/geminiService';
+// Мы определим схемы функций прямо здесь, чтобы гарантировать работу без внешних зависимостей
+// import { navigationFunctionDeclaration, ... } from './services/geminiService'; 
 
 import Sidebar from './components/Sidebar';
 import DashboardPage from './pages/DashboardPage';
@@ -22,7 +23,7 @@ import AIAssistantPage from './pages/AIAssistantPage';
 import OtherReportsPage from './pages/OtherReportsPage';
 import VoiceAssistantOverlay from './components/VoiceAssistantOverlay';
 import { initialUserData, mockUser } from './services/mockData';
-import { User, UserData, Report, CommercialProposal, AdCampaign, Link, StoredFile, CompanyProfile, Payment, OtherReport } from './types';
+import { User, UserData } from './types';
 
 import { 
   fetchFullUserData, 
@@ -37,6 +38,66 @@ import {
 } from './services/api';
 
 import Logo from './components/Logo';
+
+// --- ОПРЕДЕЛЕНИЕ ИНСТРУМЕНТОВ (TOOLS) ПРЯМО В ФАЙЛЕ ---
+
+const navigationTool: FunctionDeclaration = {
+    name: "navigateToPage",
+    description: "Переходит на указанную страницу приложения. Используй, когда пользователь просит открыть раздел.",
+    parameters: {
+        type: SchemaType.OBJECT,
+        properties: {
+            page: {
+                type: SchemaType.STRING,
+                description: "URL путь (например: '/dashboard', '/reports', '/proposals', '/campaigns', '/settings', '/ai-assistant')",
+            },
+        },
+        required: ["page"],
+    },
+};
+
+const createProposalTool: FunctionDeclaration = {
+    name: "createCommercialProposal",
+    description: "Создает новое Коммерческое Предложение (КП) в системе.",
+    parameters: {
+        type: SchemaType.OBJECT,
+        properties: {
+            company: { type: SchemaType.STRING, description: "Название компании клиента" },
+            item: { type: SchemaType.STRING, description: "Название товара или услуги (например: 'Техпластина ТМКЩ', '3D печать шестерни')" },
+            amount: { type: SchemaType.NUMBER, description: "Сумма КП (число)" },
+            direction: { type: SchemaType.STRING, description: "Направление: 'РТИ' или '3D'" },
+        },
+        required: ["company", "item", "amount"],
+    },
+};
+
+const addMarketingIdeaTool: FunctionDeclaration = {
+    name: "addMarketingIdea",
+    description: "Сохраняет идею для рекламной кампании или маркетинговой активности.",
+    parameters: {
+        type: SchemaType.OBJECT,
+        properties: {
+            name: { type: SchemaType.STRING, description: "Название идеи или кампании" },
+            budget: { type: SchemaType.NUMBER, description: "Предполагаемый бюджет (если есть, иначе 0)" },
+        },
+        required: ["name"],
+    },
+};
+
+const calculateMarginTool: FunctionDeclaration = {
+    name: "calculateMargin",
+    description: "Рассчитывает маржинальность сделки в процентах. Полезно для оценки прибыльности КП.",
+    parameters: {
+        type: SchemaType.OBJECT,
+        properties: {
+            costPrice: { type: SchemaType.NUMBER, description: "Себестоимость" },
+            salePrice: { type: SchemaType.NUMBER, description: "Цена продажи" },
+        },
+        required: ["costPrice", "salePrice"],
+    },
+};
+
+// -------------------------------------------------------
 
 const App: React.FC = () => {
     const [userData, setUserData] = useState<UserData>(initialUserData);
@@ -56,9 +117,7 @@ const App: React.FC = () => {
     const mediaStreamRef = useRef<MediaStream | null>(null);
     const mediaStreamSourceRef = useRef<MediaStreamAudioSourceNode | null>(null);
     
-    // !!! ВОТ ЭТА СТРОЧКА БЫЛА ПОТЕРЯНА, Я ЕЁ ВЕРНУЛ !!!
     const nextStartTimeRef = useRef(0);
-    
     const audioSourcesRef = useRef(new Set<AudioBufferSourceNode>());
     const userTranscriptRef = useRef('');
     const aiTranscriptRef = useRef('');
@@ -69,7 +128,6 @@ const App: React.FC = () => {
             try {
                 const data = await fetchFullUserData();
                 setUserData(data);
-                console.log("Lumi: Данные успешно загружены.");
             } catch (error) {
                 console.error("Ошибка загрузки:", error);
             } finally {
@@ -151,7 +209,6 @@ const App: React.FC = () => {
         outputAudioContextRef.current = null;
         sessionRef.current = null;
         
-        // Очищаем очередь воспроизведения
         audioSourcesRef.current.forEach(source => { try { source.stop(); } catch(e){} });
         audioSourcesRef.current.clear();
         
@@ -161,26 +218,58 @@ const App: React.FC = () => {
 
     useEffect(() => { return () => { if(sessionRef.current) sessionRef.current.close(); cleanupVoiceSession(); }; }, [cleanupVoiceSession]);
 
+    // -------------------------------------------------------------------------
+    // СУПЕР-МОЗГ: ИНСТРУКЦИЯ ДЛЯ LUMI (KZ TRANSIT EDITION)
+    // -------------------------------------------------------------------------
     const generateContext = (data: UserData) => {
-        const today = new Date().toLocaleDateString('ru-RU');
-        const reports = data.reports.map(r => `OTCHET[${r.name}]:Sales=${r.metrics.sales},Leads=${r.metrics.leads}`).join(';');
-        const props = data.proposals.map(p => `KP[${p.company}|${p.amount}|${p.status}]`).join(';');
-        const camps = data.campaigns.map(c => `ADS[${c.name}|${c.status}|Spend=${c.spend}]`).join(';');
-        const pay = data.payments.map(p => `PAY[${p.serviceName}|${p.amount}|${p.nextPaymentDate}]`).join(';');
+        const today = new Date().toLocaleDateString('ru-RU', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });
+        
+        const databaseSnapshot = {
+            reports: data.reports,
+            proposals: data.proposals,
+            campaigns: data.campaigns,
+            payments: data.payments,
+            otherReports: data.otherReports,
+            links: data.links
+        };
 
         return `
-        DATA:${today}
-        ROLE:Lumi, Business Analyst, Engineer.
-        LANG:RUSSIAN. Digits as words!
-        TOOLS:[googleSearch],[navigateToPage],[createCommercialProposal].
-        RULES:Short voice answers. Stop on command.
-        DB:
-        PROFILE:${JSON.stringify(data.companyProfile.details)}
-        REPORTS:${reports}
-        PROPOSALS:${props}
-        ADS:${camps}
-        PAYMENTS:${pay}
-        INSTRUCTION:${data.companyProfile.aiSystemInstruction}
+        SYSTEM_INSTRUCTION:
+        DATE: ${today}
+        
+        IDENTITY & COMPANY:
+        - Твое имя: Lumi (Люми).
+        - Компания: ТОО "KZ TRANSIT" (Казахстан).
+        - Твои роли: Главный Инженер-технолог, Директор по маркетингу (CMO), Бизнес-аналитик.
+        
+        VOICE & LANGUAGE SETTINGS (CRITICAL):
+        - Язык: ЧИСТЫЙ РУССКИЙ (Russian).
+        - Акцент: ОТСУТСТВУЕТ. Говори как диктор центрального телевидения или профессиональный консультант.
+        - Интонация: Уверенная, спокойная, компетентная.
+        - Ответы: Лаконичные, без воды. Сначала суть, потом детали.
+
+        DOMAIN KNOWLEDGE (ТЕХНИЧЕСКАЯ ЧАСТЬ):
+        1. РТИ (Резинотехнические изделия): Ты знаешь всё про техпластины (ТМКЩ, МБС), рукава, манжеты, сырые резины, силиконы. Знаешь ГОСТы (ищи их в googleSearch).
+        2. Аддитивные технологии (3D): FDM, SLA, SLS печать. Материалы: PLA, ABS, PETG, Nylon, PEEK.
+        3. Если спрашивают технический совет — отвечай как опытный инженер.
+
+        BUSINESS & MARKETING SKILLS:
+        1. Ты анализируешь данные (см. JSON ниже). Сравнивай показатели, ищи убыточные места.
+        2. Ты помогаешь продавать. Если просят составить текст письма клиенту — диктуй идеальный продающий текст.
+        3. Ты стратег. Предлагай идеи для акций, если видишь спад продаж.
+
+        AVAILABLE TOOLS:
+        1. [googleSearch]: ДЛЯ ВНЕШНИХ ДАННЫХ. Курсы валют (KZT/USD), погода, новости, ГОСТы, конкуренты.
+        2. [navigateToPage]: Для управления интерфейсом ("Открой отчеты").
+        3. [createCommercialProposal]: Создать КП ("Создай КП для АО КазМунайГаз...").
+        4. [addMarketingIdea]: Записать идею ("Запиши идею: запустить таргет на техпластины").
+        5. [calculateMargin]: Посчитать выгоду ("Себестоимость 1000, продаем за 1500, какая маржа?").
+
+        DATABASE_ACCESS:
+        ${JSON.stringify(databaseSnapshot)}
+
+        USER_PREFERENCES:
+        ${data.companyProfile.aiSystemInstruction}
         `;
     };
 
@@ -196,8 +285,6 @@ const App: React.FC = () => {
         setLiveAiTranscript('');
         userTranscriptRef.current = '';
         aiTranscriptRef.current = '';
-        
-        // Сброс времени начала воспроизведения
         nextStartTimeRef.current = 0;
 
         const apiKey = import.meta.env.VITE_GOOGLE_API_KEY;
@@ -207,18 +294,33 @@ const App: React.FC = () => {
             const ai = new GoogleGenAI({ apiKey: apiKey });
             const fullContext = generateContext(userData);
 
+            // Разделяем инструменты для стабильности API
+            const toolsArray: Tool[] = [
+                { googleSearch: {} },
+                { 
+                    functionDeclarations: [
+                        navigationTool, 
+                        createProposalTool,
+                        addMarketingIdeaTool,
+                        calculateMarginTool
+                    ] 
+                }
+            ];
+
             const sessionPromise = ai.live.connect({
                 model: 'models/gemini-2.0-flash-exp',
                 config: {
                     responseModalities: [Modality.AUDIO],
-                    speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName: 'Zephyr' } } },
+                    speechConfig: { 
+                        voiceConfig: { 
+                            prebuiltVoiceConfig: { 
+                                // 'Puck' звучит более уверенно и "инженерно", чем 'Zephyr'
+                                voiceName: 'Puck' 
+                            } 
+                        } 
+                    },
                     systemInstruction: fullContext,
-                    inputAudioTranscription: {},
-                    outputAudioTranscription: {},
-                    tools: [
-                        { googleSearch: {} }, 
-                        { functionDeclarations: [navigationFunctionDeclaration, createCommercialProposalFunctionDeclaration] }
-                    ],
+                    tools: toolsArray,
                 },
                 callbacks: {
                     onopen: async () => {
@@ -238,9 +340,8 @@ const App: React.FC = () => {
                         
                         scriptProcessorRef.current.onaudioprocess = (event) => {
                             const inputData = event.inputBuffer.getChannelData(0);
-                            const l = inputData.length;
-                            const int16 = new Int16Array(l);
-                            for (let i = 0; i < l; i++) { int16[i] = inputData[i] * 32768; }
+                            const int16 = new Int16Array(inputData.length);
+                            for (let i = 0; i < inputData.length; i++) { int16[i] = inputData[i] * 32768; }
                             const pcmBlob: Blob = { data: encode(new Uint8Array(int16.buffer)), mimeType: 'audio/pcm;rate=16000' };
                             sessionPromise.then(session => {
                                 try { session.sendRealtimeInput({ media: pcmBlob }); } catch (e) {}
@@ -261,30 +362,81 @@ const App: React.FC = () => {
                             userTranscriptRef.current += message.serverContent.inputTranscription.text;
                             setLiveUserTranscript(userTranscriptRef.current);
                         }
+                        
+                        // --- ВЫПОЛНЕНИЕ ИНСТРУМЕНТОВ ---
                         if (message.toolCall) {
+                            const functionResponses: any[] = [];
+                            
                             for (const fc of message.toolCall.functionCalls) {
-                                let functionResult = "Действие выполнено.";
-                                if (fc.name === 'navigateToPage' && fc.args.page) {
-                                   handleNavigation(fc.args.page as string);
-                                   functionResult = `Переход на страницу ${fc.args.page}`;
+                                let result: any = { result: "Команда принята." };
+                                
+                                try {
+                                    // 1. Навигация
+                                    if (fc.name === 'navigateToPage' && fc.args.page) {
+                                       handleNavigation(fc.args.page as string);
+                                       result = { result: `ОК. Открываю: ${fc.args.page}` };
+                                    } 
+                                    // 2. Создание КП
+                                    else if (fc.name === 'createCommercialProposal') {
+                                       const { company, item, amount, direction } = fc.args as any;
+                                       // Определяем направление (по умолчанию РТИ)
+                                       let normalizedDirection: 'РТИ' | '3D' = 'РТИ';
+                                       if (typeof direction === 'string' && direction.toUpperCase().includes('3D')) normalizedDirection = '3D';
+                                       
+                                       crudFunctions.addProposal({
+                                           date: new Date().toISOString().split('T')[0],
+                                           direction: normalizedDirection,
+                                           proposalNumber: `КП-${Math.floor(10000 + Math.random() * 90000)}`,
+                                           company: company, 
+                                           item: item, 
+                                           amount: amount, 
+                                           status: 'Ожидание', 
+                                           invoiceNumber: null, invoiceDate: null, paymentDate: null, paymentType: null,
+                                       });
+                                       result = { result: `КП для ${company} на сумму ${amount} создано успешно.` };
+                                    }
+                                    // 3. Добавление идеи (Маркетинг)
+                                    else if (fc.name === 'addMarketingIdea') {
+                                        const { name, budget } = fc.args as any;
+                                        crudFunctions.addCampaign({
+                                            name: name,
+                                            status: 'Черновик',
+                                            spend: budget || 0,
+                                            clicks: 0, leads: 0, sales: 0
+                                        });
+                                        result = { result: `Идея "${name}" записана в рекламные кампании как черновик.` };
+                                    }
+                                    // 4. Расчет маржи (Калькулятор)
+                                    else if (fc.name === 'calculateMargin') {
+                                        const { costPrice, salePrice } = fc.args as any;
+                                        if (salePrice > 0) {
+                                            const margin = ((salePrice - costPrice) / salePrice) * 100;
+                                            const profit = salePrice - costPrice;
+                                            result = { result: `Прибыль: ${profit}. Маржинальность: ${margin.toFixed(2)}%.` };
+                                        } else {
+                                            result = { result: "Ошибка: Цена продажи должна быть больше нуля." };
+                                        }
+                                    }
+
+                                } catch (e) {
+                                    console.error("Tool Error:", e);
+                                    result = { error: "Не удалось выполнить действие." };
                                 }
-                                if (fc.name === 'createCommercialProposal') {
-                                   const { company, item, amount, direction, date } = fc.args as any;
-                                   let normalizedDirection: 'РТИ' | '3D' = 'РТИ';
-                                   if (typeof direction === 'string' && direction.toUpperCase() === '3D') normalizedDirection = '3D';
-                                   crudFunctions.addProposal({
-                                       date: date || new Date().toISOString().split('T')[0],
-                                       direction: normalizedDirection,
-                                       proposalNumber: `КП-${Math.floor(10000 + Math.random() * 90000)}`,
-                                       company: company, item: item, amount: amount, status: 'Ожидание', invoiceNumber: null, invoiceDate: null, paymentDate: null, paymentType: null,
-                                   });
-                                   functionResult = `КП создано.`;
-                                }
+
+                                functionResponses.push({
+                                    id: fc.id,
+                                    name: fc.name,
+                                    response: result
+                                });
+                            }
+
+                            if (functionResponses.length > 0) {
                                 sessionPromise.then((session) => {
-                                   session.sendToolResponse({ functionResponses: { id: fc.id, name: fc.name, response: { result: functionResult } } });
+                                   session.sendToolResponse({ functionResponses });
                                 });
                             }
                         }
+                        
                         if (message.serverContent?.turnComplete) {
                             userTranscriptRef.current = '';
                             aiTranscriptRef.current = '';
@@ -297,28 +449,14 @@ const App: React.FC = () => {
                                 const base64Audio = part.inlineData?.data;
                                 if (base64Audio && outputAudioContextRef.current) {
                                     const outCtx = outputAudioContextRef.current;
-                                    
-                                    // 1. Декодируем звук
                                     const audioBuffer = await decodeAudioData(decode(base64Audio), outCtx, 24000, 1);
-                                    
-                                    // 2. Рассчитываем время начала (чтобы фразы шли друг за другом)
                                     const now = outCtx.currentTime;
-                                    // Если пауза была большой, сбрасываем таймер на "сейчас"
-                                    if (nextStartTimeRef.current < now) {
-                                        nextStartTimeRef.current = now;
-                                    }
-                                    
+                                    if (nextStartTimeRef.current < now) nextStartTimeRef.current = now;
                                     const source = outCtx.createBufferSource();
                                     source.buffer = audioBuffer;
                                     source.connect(outCtx.destination);
-                                    
-                                    // 3. Играем
                                     source.start(nextStartTimeRef.current);
-                                    
-                                    // 4. Сдвигаем время для следующего куска
                                     nextStartTimeRef.current += audioBuffer.duration;
-                                    
-                                    // Сохраняем для очистки
                                     audioSourcesRef.current.add(source);
                                     source.onended = () => audioSourcesRef.current.delete(source);
                                 }
@@ -327,9 +465,9 @@ const App: React.FC = () => {
                     },
                     onclose: cleanupVoiceSession,
                     onerror: (e: any) => {
-                        console.error(e);
+                        console.error("Lumi Connection Error:", e);
                         if (isVoiceControlActive && !e.message?.includes("closing")) {
-                            alert(`Сбой Люми: ${e.message || "Ошибка сети"}`);
+                           // Тихая обработка ошибок переподключения
                         }
                         cleanupVoiceSession();
                     },
@@ -337,7 +475,8 @@ const App: React.FC = () => {
             });
             sessionRef.current = await sessionPromise;
         } catch (err) {
-            alert("Не удалось подключиться.");
+            console.error(err);
+            alert("Не удалось подключиться. Проверьте соединение.");
             cleanupVoiceSession();
         }
     };
