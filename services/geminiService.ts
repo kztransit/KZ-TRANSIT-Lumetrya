@@ -1,7 +1,8 @@
-import { GoogleGenAI, FunctionDeclaration, SchemaType } from "@google/genai";
+import { GoogleGenAI, FunctionDeclaration } from "@google/genai";
 import { UserData } from "../types";
 
-// --- ИНСТРУМЕНТЫ ---
+// --- ИНСТРУМЕНТЫ (Function Declarations) ---
+// Используем строковые типы ("STRING", "OBJECT"), так как SchemaType устарел в новой версии SDK
 
 export const navigationFunctionDeclaration: FunctionDeclaration = {
     name: 'navigateToPage',
@@ -125,6 +126,31 @@ export const analyzePaymentInvoice = async (mimeType: string, base64Data: string
     return JSON.parse(cleanJson(response.text()));
 };
 
+// --- АНАЛИЗ ДАННЫХ (ДЛЯ ДАШБОРДА) ---
+// Вот эта функция, которой не хватало!
+export const analyzeDataConsistency = async (reports: any[]): Promise<string> => {
+    const apiKey = import.meta.env.VITE_GOOGLE_API_KEY;
+    if (!apiKey) throw new Error("API Key not found");
+    
+    const client = new GoogleGenAI({ apiKey });
+
+    // Сжимаем данные, чтобы не перегрузить запрос
+    const simplifiedReports = reports.slice(-5).map(r => ({
+        name: r.name,
+        metrics: r.metrics
+    }));
+
+    const prompt = `Проанализируй эти маркетинговые отчеты. Найди тренды, аномалии (резкие падения/росты) и дай краткое резюме на русском языке. Данные: ${JSON.stringify(simplifiedReports)}`;
+    
+    const response = await client.models.generateContent({
+        model: "models/gemini-2.0-flash-exp",
+        contents: [{ role: "user", parts: [{ text: prompt }] }]
+    });
+
+    return response.text() || "Не удалось получить анализ.";
+};
+
+
 // --- ГЛАВНАЯ ФУНКЦИЯ ТЕКСТОВОГО ЧАТА ---
 export const getAIAssistantResponse = async (prompt: string, userData: UserData, systemInstruction: string) => {
     const apiKey = import.meta.env.VITE_GOOGLE_API_KEY;
@@ -132,41 +158,34 @@ export const getAIAssistantResponse = async (prompt: string, userData: UserData,
     
     const client = new GoogleGenAI({ apiKey });
     
-    try {
-        // Инициализируем чат
-        const chat = client.chats.create({
-            model: "models/gemini-2.0-flash-exp", // Уточнил модель
-            config: {
-                systemInstruction: systemInstruction,
-                tools: [
-                    { googleSearch: {} }, // ВКЛЮЧАЕМ ПОИСК
-                    { functionDeclarations: [
-                        navigationFunctionDeclaration,
-                        createOtherReportFunctionDeclaration,
-                        updateOtherReportKpiFunctionDeclaration,
-                        createCommercialProposalFunctionDeclaration,
-                        updateCommercialProposalFunctionDeclaration
-                    ]}
-                ]
-            }
-        });
-
-        const result = await chat.sendMessage({
-            role: "user",
-            parts: [{ text: prompt }]
-        });
-        
-        // Обработка вызова функций
-        let functionCalls;
-        try { functionCalls = result.functionCalls(); } catch (e) { functionCalls = []; }
-        
-        if (functionCalls && functionCalls.length > 0) {
-            return { text: null, functionCall: functionCalls[0] };
+    const chat = client.chats.create({
+        model: "models/gemini-2.0-flash-exp",
+        config: {
+            systemInstruction: systemInstruction,
+            tools: [
+                { googleSearch: {} }, // ПОИСК
+                { functionDeclarations: [
+                    navigationFunctionDeclaration,
+                    createOtherReportFunctionDeclaration,
+                    updateOtherReportKpiFunctionDeclaration,
+                    createCommercialProposalFunctionDeclaration,
+                    updateCommercialProposalFunctionDeclaration
+                ]}
+            ]
         }
+    });
 
-        return { text: result.text(), functionCall: null };
-    } catch (error: any) {
-        console.error("GEMINI ERROR:", error); // <--- ВАЖНО: ТЕПЕРЬ МЫ УВИДИМ ОШИБКУ В КОНСОЛИ
-        throw new Error(error.message || "Ошибка AI сервиса");
+    const result = await chat.sendMessage({
+        role: "user",
+        parts: [{ text: prompt }]
+    });
+    
+    let functionCalls;
+    try { functionCalls = result.functionCalls(); } catch (e) { functionCalls = []; }
+    
+    if (functionCalls && functionCalls.length > 0) {
+        return { text: null, functionCall: functionCalls[0] };
     }
+
+    return { text: result.text(), functionCall: null };
 };
