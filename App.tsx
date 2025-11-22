@@ -97,11 +97,14 @@ const App: React.FC = () => {
     const [currentUser, setCurrentUser] = useState<User | null>(null);
     const [isSidebarOpen, setSidebarOpen] = useState<boolean>(true);
     
+    // Состояния интерфейса
     const [isVoiceControlActive, setIsVoiceControlActive] = useState(false);
+    const [isConnecting, setIsConnecting] = useState(false); // Чтобы не нажимали кнопку дважды
     const [voiceStatus, setVoiceStatus] = useState<'idle' | 'greeting' | 'listening' | 'speaking'>('idle');
     const [liveUserTranscript, setLiveUserTranscript] = useState('');
     const [liveAiTranscript, setLiveAiTranscript] = useState('');
 
+    // Refs для аудио и сессии
     const sessionRef = useRef<LiveSession | null>(null);
     const inputAudioContextRef = useRef<AudioContext | null>(null);
     const outputAudioContextRef = useRef<AudioContext | null>(null);
@@ -109,14 +112,12 @@ const App: React.FC = () => {
     const mediaStreamRef = useRef<MediaStream | null>(null);
     const mediaStreamSourceRef = useRef<MediaStreamAudioSourceNode | null>(null);
     
-    // Флаг, что мы находимся в процессе закрытия
-    const isClosingRef = useRef(false);
-    
     const nextStartTimeRef = useRef(0);
     const audioSourcesRef = useRef(new Set<AudioBufferSourceNode>());
     const userTranscriptRef = useRef('');
     const aiTranscriptRef = useRef('');
     
+    // --- ЗАГРУЗКА ДАННЫХ ---
     useEffect(() => {
         const loadData = async () => {
             setIsLoadingData(true);
@@ -182,55 +183,51 @@ const App: React.FC = () => {
     const navigate = useNavigate();
     const handleNavigation = (page: string) => { navigate(page); };
 
-    // --- УЛУЧШЕННАЯ ОЧИСТКА СЕССИИ ---
-    const cleanupVoiceSession = useCallback(() => {
-        isClosingRef.current = true; 
+    // --- ЛОГИКА ГОЛОСОВОГО АССИСТЕНТА ---
 
-        // 1. Сразу отключаем обработчик, чтобы остановить поток данных
+    const stopEverything = useCallback(() => {
+        // 1. Останавливаем процессор скриптов (самое важное для устранения ошибки)
         if (scriptProcessorRef.current) {
             scriptProcessorRef.current.onaudioprocess = null;
             scriptProcessorRef.current.disconnect();
+            scriptProcessorRef.current = null;
         }
-        
-        // 2. Отключаем источник
-        if (mediaStreamSourceRef.current) {
-            mediaStreamSourceRef.current.disconnect();
-        }
-
-        // 3. Гасим микрофон
+        // 2. Останавливаем микрофон
         if (mediaStreamRef.current) {
             mediaStreamRef.current.getTracks().forEach(track => track.stop());
+            mediaStreamRef.current = null;
         }
-
-        // 4. Закрываем сокет (если он есть)
+        // 3. Отключаем источник
+        if (mediaStreamSourceRef.current) {
+            mediaStreamSourceRef.current.disconnect();
+            mediaStreamSourceRef.current = null;
+        }
+        // 4. Закрываем контексты
+        if (inputAudioContextRef.current) {
+            inputAudioContextRef.current.close().catch(() => {});
+            inputAudioContextRef.current = null;
+        }
+        if (outputAudioContextRef.current) {
+            outputAudioContextRef.current.close().catch(() => {});
+            outputAudioContextRef.current = null;
+        }
+        // 5. Закрываем сессию
         if (sessionRef.current) {
-            // Небольшая задержка перед закрытием иногда помогает избежать гонки
-            try {
-                sessionRef.current.close();
-            } catch (e) {
-                // Игнорируем ошибки при закрытии
-            }
+            try { sessionRef.current.close(); } catch (e) {}
+            sessionRef.current = null;
         }
-
-        inputAudioContextRef.current?.close().catch(() => {});
-        outputAudioContextRef.current?.close().catch(() => {});
-
-        mediaStreamRef.current = null;
-        scriptProcessorRef.current = null;
-        mediaStreamSourceRef.current = null;
-        inputAudioContextRef.current = null;
-        outputAudioContextRef.current = null;
-        sessionRef.current = null;
-        
+        // 6. Очищаем буферы воспроизведения
         audioSourcesRef.current.forEach(source => { try { source.stop(); } catch(e){} });
         audioSourcesRef.current.clear();
-        
+
+        // Сброс UI
         setIsVoiceControlActive(false);
+        setIsConnecting(false);
         setVoiceStatus('idle');
-        isClosingRef.current = false;
     }, []);
 
-    useEffect(() => { return () => { cleanupVoiceSession(); }; }, [cleanupVoiceSession]);
+    // При размонтировании компонента всё чистим
+    useEffect(() => { return () => stopEverything(); }, [stopEverything]);
 
     const generateContext = (data: UserData) => {
         const today = new Date().toLocaleDateString('ru-RU');
@@ -252,25 +249,35 @@ const App: React.FC = () => {
         `;
     };
 
-    const handleToggleVoiceControl = async () => {
-        if (isVoiceControlActive) {
-            cleanupVoiceSession();
-            return;
-        }
-
-        setIsVoiceControlActive(true);
-        setVoiceStatus('greeting');
-        setLiveUserTranscript('');
-        setLiveAiTranscript('');
-        userTranscriptRef.current = '';
-        aiTranscriptRef.current = '';
-        nextStartTimeRef.current = 0;
-        isClosingRef.current = false;
+    const connectToGemini = async () => {
+        if (isConnecting) return;
+        setIsConnecting(true);
+        
+        // Очистим всё перед новым подключением
+        stopEverything();
 
         const apiKey = import.meta.env.VITE_GOOGLE_API_KEY;
-        if (!apiKey) { alert("API Key not found"); cleanupVoiceSession(); return; }
-        
+        if (!apiKey) { 
+            alert("API Key not found"); 
+            setIsConnecting(false); 
+            return; 
+        }
+
+        // ЛОКАЛЬНЫЙ ФЛАГ АКТИВНОСТИ
+        // Это самое важное исправление: мы будем проверять этот флаг внутри колбэков.
+        // Если connectToGemini вызовется снова, старая переменная activeSession станет неактуальной для новой логики,
+        // но здесь мы используем замыкание.
+        let isSessionActive = true;
+
         try {
+            setIsVoiceControlActive(true);
+            setVoiceStatus('greeting'); // Показываем "Подключение..."
+            setLiveUserTranscript('');
+            setLiveAiTranscript('');
+            userTranscriptRef.current = '';
+            aiTranscriptRef.current = '';
+            nextStartTimeRef.current = 0;
+
             const ai = new GoogleGenAI({ apiKey: apiKey });
             const fullContext = generateContext(userData);
 
@@ -279,6 +286,30 @@ const App: React.FC = () => {
                 { functionDeclarations: [navigationTool, createProposalTool, addMarketingIdeaTool, calculateMarginTool] }
             ];
 
+            // 1. Настройка аудио
+            const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+            // Если пользователь отменил подключение пока мы просили микрофон
+            if (!isSessionActive) {
+                 stream.getTracks().forEach(t => t.stop());
+                 return;
+            }
+            mediaStreamRef.current = stream;
+
+            const AudioContextClass = window.AudioContext || (window as any).webkitAudioContext;
+            const inputContext = new AudioContextClass({ sampleRate: 16000 });
+            await inputContext.resume();
+            inputAudioContextRef.current = inputContext;
+
+            const outputContext = new AudioContextClass({ sampleRate: 24000 });
+            outputAudioContextRef.current = outputContext;
+
+            const source = inputContext.createMediaStreamSource(stream);
+            mediaStreamSourceRef.current = source;
+            
+            const processor = inputContext.createScriptProcessor(4096, 1, 1);
+            scriptProcessorRef.current = processor;
+
+            // 2. Подключение к сокету
             const sessionPromise = ai.live.connect({
                 model: 'models/gemini-2.0-flash-exp',
                 config: {
@@ -288,52 +319,14 @@ const App: React.FC = () => {
                     tools: toolsArray,
                 },
                 callbacks: {
-                    onopen: async () => {
-                        // Если пока мы подключались, пользователь нажал "стоп"
-                        if (isClosingRef.current) {
-                            (await sessionPromise).close();
-                            return;
-                        }
-
-                        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-                        mediaStreamRef.current = stream;
-
-                        const AudioContextClass = window.AudioContext || (window as any).webkitAudioContext;
-                        const inputContext = new AudioContextClass({ sampleRate: 16000 });
-                        if (inputContext.state === 'suspended') await inputContext.resume();
-                        inputAudioContextRef.current = inputContext;
-
-                        const outputContext = new AudioContextClass({ sampleRate: 24000 });
-                        outputAudioContextRef.current = outputContext;
-                        
-                        mediaStreamSourceRef.current = inputAudioContextRef.current.createMediaStreamSource(stream);
-                        scriptProcessorRef.current = inputAudioContextRef.current.createScriptProcessor(4096, 1, 1);
-                        
-                        // --- БЕЗОПАСНАЯ ОБРАБОТКА АУДИО ---
-                        scriptProcessorRef.current.onaudioprocess = (event) => {
-                            if (isClosingRef.current || !sessionRef.current) return;
-
-                            const inputData = event.inputBuffer.getChannelData(0);
-                            const int16 = new Int16Array(inputData.length);
-                            for (let i = 0; i < inputData.length; i++) { int16[i] = inputData[i] * 32768; }
-                            
-                            const pcmBlob: Blob = { data: encode(new Uint8Array(int16.buffer)), mimeType: 'audio/pcm;rate=16000' };
-                            
-                            // Оборачиваем отправку в try-catch чтобы подавить ошибку "closed state"
-                            try {
-                                sessionRef.current.sendRealtimeInput({ media: pcmBlob });
-                            } catch (e) {
-                                // Если сокет закрылся в момент отправки - просто игнорируем
-                            }
-                        };
-                        
-                        mediaStreamSourceRef.current.connect(scriptProcessorRef.current);
-                        scriptProcessorRef.current.connect(inputAudioContextRef.current.destination);
-
+                    onopen: () => {
+                        if (!isSessionActive) return;
                         setVoiceStatus('listening');
+                        setIsConnecting(false); // Подключились!
+                        console.log("Lumi Connected");
                     },
                     onmessage: async (message: LiveServerMessage) => {
-                        if (isClosingRef.current) return;
+                        if (!isSessionActive) return;
 
                         if (message.serverContent?.outputTranscription) {
                             setVoiceStatus('speaking');
@@ -348,11 +341,12 @@ const App: React.FC = () => {
                         if (message.toolCall) {
                             const functionResponses: any[] = [];
                             for (const fc of message.toolCall.functionCalls) {
+                                console.log("Calling tool:", fc.name);
                                 let result: any = { result: "Ok" };
                                 try {
-                                    if (fc.name === 'navigateToPage' && fc.args.page) {
+                                    if (fc.name === 'navigateToPage') {
                                        handleNavigation(fc.args.page as string);
-                                       result = { result: `Открыто: ${fc.args.page}` };
+                                       result = { result: "Done" };
                                     } 
                                     else if (fc.name === 'createCommercialProposal') {
                                         const { company, item, amount, direction } = fc.args as any;
@@ -363,24 +357,22 @@ const App: React.FC = () => {
                                            proposalNumber: `КП-${Math.floor(10000 + Math.random() * 90000)}`,
                                            company, item, amount, status: 'Ожидание', invoiceNumber: null, invoiceDate: null, paymentDate: null, paymentType: null,
                                         });
-                                        result = { result: "КП создано" };
+                                        result = { result: "Created" };
                                     }
                                     else if (fc.name === 'addMarketingIdea') {
                                         const { name, budget } = fc.args as any;
                                         crudFunctions.addCampaign({ name, status: 'Черновик', spend: budget || 0, clicks: 0, leads: 0, sales: 0 });
-                                        result = { result: "Идея сохранена" };
+                                        result = { result: "Saved" };
                                     }
                                     else if (fc.name === 'calculateMargin') {
                                         const { costPrice, salePrice } = fc.args as any;
-                                        result = { result: `Маржа: ${(((salePrice-costPrice)/salePrice)*100).toFixed(1)}%` };
+                                        result = { result: `Margin: ${(((salePrice-costPrice)/salePrice)*100).toFixed(1)}%` };
                                     }
-                                } catch(e) { result = { error: "Fail" }; }
+                                } catch(e) { result = { error: "Failed" }; }
                                 functionResponses.push({ id: fc.id, name: fc.name, response: result });
                             }
-                            if (functionResponses.length > 0 && !isClosingRef.current) {
-                                try {
-                                    sessionRef.current?.sendToolResponse({ functionResponses });
-                                } catch(e) {}
+                            if (functionResponses.length > 0 && isSessionActive) {
+                                sessionRef.current?.sendToolResponse({ functionResponses }).catch(() => {});
                             }
                         }
                         
@@ -388,7 +380,7 @@ const App: React.FC = () => {
                             userTranscriptRef.current = '';
                             aiTranscriptRef.current = '';
                             setTimeout(() => { 
-                                if(!isClosingRef.current) {
+                                if(isSessionActive) {
                                     setLiveUserTranscript(''); 
                                     setLiveAiTranscript(''); 
                                     setVoiceStatus('listening'); 
@@ -416,28 +408,69 @@ const App: React.FC = () => {
                             }
                         }
                     },
-                    onclose: () => {
-                        if (!isClosingRef.current) cleanupVoiceSession();
+                    onclose: (e: any) => {
+                        console.log("Session closed", e);
+                        if (isSessionActive) {
+                            isSessionActive = false;
+                            stopEverything();
+                        }
                     },
                     onerror: (e: any) => {
-                        // Игнорируем ошибки сети при закрытии
-                        if (!isClosingRef.current) cleanupVoiceSession();
-                    },
+                        console.error("Session error", e);
+                        if (isSessionActive) {
+                            isSessionActive = false;
+                            stopEverything();
+                        }
+                    }
                 }
             });
-            
+
             const session = await sessionPromise;
-            // Если закрыли, пока ждали промис
-            if (isClosingRef.current) {
+            
+            // ДВОЙНАЯ ПРОВЕРКА: Если пока мы коннектились, юзер нажал стоп
+            if (!isSessionActive) {
                 session.close();
+                stopEverything();
                 return;
             }
+            
             sessionRef.current = session;
 
+            // 3. Запуск отправки аудио (Только если active)
+            processor.onaudioprocess = (event) => {
+                if (!isSessionActive || !sessionRef.current) return;
+
+                const inputData = event.inputBuffer.getChannelData(0);
+                const int16 = new Int16Array(inputData.length);
+                for (let i = 0; i < inputData.length; i++) { int16[i] = inputData[i] * 32768; }
+                const pcmBlob: Blob = { data: encode(new Uint8Array(int16.buffer)), mimeType: 'audio/pcm;rate=16000' };
+                
+                try {
+                    sessionRef.current.sendRealtimeInput({ media: pcmBlob });
+                } catch (e) {
+                    // Ошибка отправки - не страшно, просто игнорируем
+                }
+            };
+
+            source.connect(processor);
+            processor.connect(inputContext.destination);
+
         } catch (err) {
-            console.error("Connection failed", err);
-            alert("Ошибка подключения. Попробуйте снова.");
-            cleanupVoiceSession();
+            console.error("Failed to connect:", err);
+            isSessionActive = false;
+            stopEverything();
+            alert("Не удалось подключиться к серверу Google.");
+        }
+    };
+
+    // Обработчик кнопки
+    const handleToggleVoiceControl = () => {
+        if (isVoiceControlActive) {
+            // Если уже включено - выключаем
+            stopEverything();
+        } else {
+            // Если выключено - включаем
+            connectToGemini();
         }
     };
     
@@ -453,7 +486,7 @@ const App: React.FC = () => {
                         <Routes>
                             <Route path="/" element={<Navigate to="/dashboard" replace />} />
                             <Route path="/dashboard" element={<DashboardPage reports={userData.reports} proposals={userData.proposals}/>} />
-                            <Route path="/ai-assistant" element={<AIAssistantPage userData={userData} addReport={crudFunctions.addReport} addMultipleProposals={crudFunctions.addMultipleProposals} addMultipleCampaigns={crudFunctions.addMultipleCampaigns} addOtherReport={crudFunctions.addOtherReport} updateOtherReport={crudFunctions.updateOtherReport} addProposal={crudFunctions.addProposal} updateProposal={crudFunctions.updateProposal} isGlobalVoiceActive={isVoiceControlActive} onDisableGlobalVoice={() => cleanupVoiceSession()} />} />
+                            <Route path="/ai-assistant" element={<AIAssistantPage userData={userData} addReport={crudFunctions.addReport} addMultipleProposals={crudFunctions.addMultipleProposals} addMultipleCampaigns={crudFunctions.addMultipleCampaigns} addOtherReport={crudFunctions.addOtherReport} updateOtherReport={crudFunctions.updateOtherReport} addProposal={crudFunctions.addProposal} updateProposal={crudFunctions.updateProposal} isGlobalVoiceActive={isVoiceControlActive} onDisableGlobalVoice={() => stopEverything()} />} />
                             <Route path="/reports" element={<ReportsPage reports={userData.reports} addReport={crudFunctions.addReport} deleteReport={crudFunctions.deleteReport} updateReport={crudFunctions.updateReport} />} />
                             <Route path="/other-reports" element={<OtherReportsPage reports={userData.otherReports} addReport={crudFunctions.addOtherReport} updateReport={crudFunctions.updateOtherReport} deleteReport={crudFunctions.deleteOtherReport} />} />
                             <Route path="/proposals" element={<CommercialProposalsPage proposals={userData.proposals} addProposal={crudFunctions.addProposal} deleteProposal={crudFunctions.deleteProposal} setProposals={crudFunctions.setProposals} updateProposal={crudFunctions.updateProposal} />} />
