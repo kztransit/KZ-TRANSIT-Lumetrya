@@ -1,10 +1,9 @@
 import React, { useState, useCallback, useMemo, useEffect, useRef } from 'react';
 import { HashRouter, Routes, Route, Navigate, useNavigate } from 'react-router-dom';
 import { v4 as uuidv4 } from 'uuid';
-import { GoogleGenAI, LiveSession, LiveServerMessage, Modality, Blob, Tool, FunctionDeclaration, SchemaType } from "@google/genai";
+import { GoogleGenAI, LiveSession, LiveServerMessage, Modality, Blob } from "@google/genai";
 import { decode, decodeAudioData, encode } from './utils';
-// Мы определим схемы функций прямо здесь, чтобы гарантировать работу без внешних зависимостей
-// import { navigationFunctionDeclaration, ... } from './services/geminiService'; 
+// import { navigationFunctionDeclaration, ... } мы убрали, определяем всё внутри
 
 import Sidebar from './components/Sidebar';
 import DashboardPage from './pages/DashboardPage';
@@ -39,16 +38,17 @@ import {
 
 import Logo from './components/Logo';
 
-// --- ОПРЕДЕЛЕНИЕ ИНСТРУМЕНТОВ (TOOLS) ПРЯМО В ФАЙЛЕ ---
+// --- ИСПРАВЛЕНИЕ: ОПРЕДЕЛЕНИЕ ИНСТРУМЕНТОВ ЧЕРЕЗ ОБЫЧНЫЕ ОБЪЕКТЫ ---
+// Мы убрали зависимость от SchemaType, чтобы избежать ошибок сборки
 
-const navigationTool: FunctionDeclaration = {
+const navigationTool = {
     name: "navigateToPage",
     description: "Переходит на указанную страницу приложения. Используй, когда пользователь просит открыть раздел.",
     parameters: {
-        type: SchemaType.OBJECT,
+        type: "OBJECT",
         properties: {
             page: {
-                type: SchemaType.STRING,
+                type: "STRING",
                 description: "URL путь (например: '/dashboard', '/reports', '/proposals', '/campaigns', '/settings', '/ai-assistant')",
             },
         },
@@ -56,42 +56,42 @@ const navigationTool: FunctionDeclaration = {
     },
 };
 
-const createProposalTool: FunctionDeclaration = {
+const createProposalTool = {
     name: "createCommercialProposal",
     description: "Создает новое Коммерческое Предложение (КП) в системе.",
     parameters: {
-        type: SchemaType.OBJECT,
+        type: "OBJECT",
         properties: {
-            company: { type: SchemaType.STRING, description: "Название компании клиента" },
-            item: { type: SchemaType.STRING, description: "Название товара или услуги (например: 'Техпластина ТМКЩ', '3D печать шестерни')" },
-            amount: { type: SchemaType.NUMBER, description: "Сумма КП (число)" },
-            direction: { type: SchemaType.STRING, description: "Направление: 'РТИ' или '3D'" },
+            company: { type: "STRING", description: "Название компании клиента" },
+            item: { type: "STRING", description: "Название товара или услуги (например: 'Техпластина ТМКЩ', '3D печать шестерни')" },
+            amount: { type: "NUMBER", description: "Сумма КП (число)" },
+            direction: { type: "STRING", description: "Направление: 'РТИ' или '3D'" },
         },
         required: ["company", "item", "amount"],
     },
 };
 
-const addMarketingIdeaTool: FunctionDeclaration = {
+const addMarketingIdeaTool = {
     name: "addMarketingIdea",
     description: "Сохраняет идею для рекламной кампании или маркетинговой активности.",
     parameters: {
-        type: SchemaType.OBJECT,
+        type: "OBJECT",
         properties: {
-            name: { type: SchemaType.STRING, description: "Название идеи или кампании" },
-            budget: { type: SchemaType.NUMBER, description: "Предполагаемый бюджет (если есть, иначе 0)" },
+            name: { type: "STRING", description: "Название идеи или кампании" },
+            budget: { type: "NUMBER", description: "Предполагаемый бюджет (если есть, иначе 0)" },
         },
         required: ["name"],
     },
 };
 
-const calculateMarginTool: FunctionDeclaration = {
+const calculateMarginTool = {
     name: "calculateMargin",
     description: "Рассчитывает маржинальность сделки в процентах. Полезно для оценки прибыльности КП.",
     parameters: {
-        type: SchemaType.OBJECT,
+        type: "OBJECT",
         properties: {
-            costPrice: { type: SchemaType.NUMBER, description: "Себестоимость" },
-            salePrice: { type: SchemaType.NUMBER, description: "Цена продажи" },
+            costPrice: { type: "NUMBER", description: "Себестоимость" },
+            salePrice: { type: "NUMBER", description: "Цена продажи" },
         },
         required: ["costPrice", "salePrice"],
     },
@@ -218,9 +218,6 @@ const App: React.FC = () => {
 
     useEffect(() => { return () => { if(sessionRef.current) sessionRef.current.close(); cleanupVoiceSession(); }; }, [cleanupVoiceSession]);
 
-    // -------------------------------------------------------------------------
-    // СУПЕР-МОЗГ: ИНСТРУКЦИЯ ДЛЯ LUMI (KZ TRANSIT EDITION)
-    // -------------------------------------------------------------------------
     const generateContext = (data: UserData) => {
         const today = new Date().toLocaleDateString('ru-RU', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });
         
@@ -294,8 +291,8 @@ const App: React.FC = () => {
             const ai = new GoogleGenAI({ apiKey: apiKey });
             const fullContext = generateContext(userData);
 
-            // Разделяем инструменты для стабильности API
-            const toolsArray: Tool[] = [
+            // Исправленная конфигурация инструментов (any для обхода строгой типизации SDK при билде)
+            const toolsArray: any[] = [
                 { googleSearch: {} },
                 { 
                     functionDeclarations: [
@@ -314,7 +311,6 @@ const App: React.FC = () => {
                     speechConfig: { 
                         voiceConfig: { 
                             prebuiltVoiceConfig: { 
-                                // 'Puck' звучит более уверенно и "инженерно", чем 'Zephyr'
                                 voiceName: 'Puck' 
                             } 
                         } 
@@ -363,7 +359,6 @@ const App: React.FC = () => {
                             setLiveUserTranscript(userTranscriptRef.current);
                         }
                         
-                        // --- ВЫПОЛНЕНИЕ ИНСТРУМЕНТОВ ---
                         if (message.toolCall) {
                             const functionResponses: any[] = [];
                             
@@ -371,15 +366,12 @@ const App: React.FC = () => {
                                 let result: any = { result: "Команда принята." };
                                 
                                 try {
-                                    // 1. Навигация
                                     if (fc.name === 'navigateToPage' && fc.args.page) {
                                        handleNavigation(fc.args.page as string);
                                        result = { result: `ОК. Открываю: ${fc.args.page}` };
                                     } 
-                                    // 2. Создание КП
                                     else if (fc.name === 'createCommercialProposal') {
                                        const { company, item, amount, direction } = fc.args as any;
-                                       // Определяем направление (по умолчанию РТИ)
                                        let normalizedDirection: 'РТИ' | '3D' = 'РТИ';
                                        if (typeof direction === 'string' && direction.toUpperCase().includes('3D')) normalizedDirection = '3D';
                                        
@@ -387,26 +379,18 @@ const App: React.FC = () => {
                                            date: new Date().toISOString().split('T')[0],
                                            direction: normalizedDirection,
                                            proposalNumber: `КП-${Math.floor(10000 + Math.random() * 90000)}`,
-                                           company: company, 
-                                           item: item, 
-                                           amount: amount, 
-                                           status: 'Ожидание', 
-                                           invoiceNumber: null, invoiceDate: null, paymentDate: null, paymentType: null,
+                                           company: company, item: item, amount: amount, 
+                                           status: 'Ожидание', invoiceNumber: null, invoiceDate: null, paymentDate: null, paymentType: null,
                                        });
                                        result = { result: `КП для ${company} на сумму ${amount} создано успешно.` };
                                     }
-                                    // 3. Добавление идеи (Маркетинг)
                                     else if (fc.name === 'addMarketingIdea') {
                                         const { name, budget } = fc.args as any;
                                         crudFunctions.addCampaign({
-                                            name: name,
-                                            status: 'Черновик',
-                                            spend: budget || 0,
-                                            clicks: 0, leads: 0, sales: 0
+                                            name: name, status: 'Черновик', spend: budget || 0, clicks: 0, leads: 0, sales: 0
                                         });
                                         result = { result: `Идея "${name}" записана в рекламные кампании как черновик.` };
                                     }
-                                    // 4. Расчет маржи (Калькулятор)
                                     else if (fc.name === 'calculateMargin') {
                                         const { costPrice, salePrice } = fc.args as any;
                                         if (salePrice > 0) {
@@ -417,7 +401,6 @@ const App: React.FC = () => {
                                             result = { result: "Ошибка: Цена продажи должна быть больше нуля." };
                                         }
                                     }
-
                                 } catch (e) {
                                     console.error("Tool Error:", e);
                                     result = { error: "Не удалось выполнить действие." };
@@ -467,7 +450,7 @@ const App: React.FC = () => {
                     onerror: (e: any) => {
                         console.error("Lumi Connection Error:", e);
                         if (isVoiceControlActive && !e.message?.includes("closing")) {
-                           // Тихая обработка ошибок переподключения
+                           // console.log("Переподключение...");
                         }
                         cleanupVoiceSession();
                     },
