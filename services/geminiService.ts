@@ -1,8 +1,7 @@
 import { GoogleGenAI, FunctionDeclaration } from "@google/genai";
 import { UserData } from "../types";
 
-// --- ИНСТРУМЕНТЫ (Function Declarations) ---
-
+// --- ИНСТРУМЕНТЫ ---
 export const navigationFunctionDeclaration: FunctionDeclaration = {
     name: 'navigateToPage',
     description: 'Переходит на указанную страницу приложения.',
@@ -25,11 +24,11 @@ export const createCommercialProposalFunctionDeclaration: FunctionDeclaration = 
     parameters: {
         type: "OBJECT",
         properties: {
-            company: { type: "STRING", description: 'Название компании клиента' },
-            item: { type: "STRING", description: 'Товар или услуга' },
-            amount: { type: "NUMBER", description: 'Сумма в тенге' },
+            company: { type: "STRING", description: 'Название компании' },
+            item: { type: "STRING", description: 'Товар' },
+            amount: { type: "NUMBER", description: 'Сумма' },
             direction: { type: "STRING", enum: ['РТИ', '3D'] },
-            date: { type: "STRING", description: 'Дата создания (YYYY-MM-DD)' }
+            date: { type: "STRING" }
         },
         required: ['company', 'item', 'amount']
     }
@@ -37,24 +36,14 @@ export const createCommercialProposalFunctionDeclaration: FunctionDeclaration = 
 
 export const createOtherReportFunctionDeclaration: FunctionDeclaration = {
     name: 'createOtherReport',
-    description: 'Создает прочий/нестандартный отчет с KPI.',
+    description: 'Создает отчет.',
     parameters: {
         type: "OBJECT",
         properties: {
-            name: { type: "STRING", description: 'Название отчета' },
-            category: { type: "STRING", description: 'Категория' },
-            date: { type: "STRING", description: 'Дата' },
-            kpis: {
-                type: "ARRAY",
-                items: {
-                    type: "OBJECT",
-                    properties: {
-                        name: { type: "STRING" },
-                        value: { type: "STRING" }
-                    },
-                    required: ['name', 'value']
-                }
-            }
+            name: { type: "STRING" },
+            category: { type: "STRING" },
+            date: { type: "STRING" },
+            kpis: { type: "ARRAY", items: { type: "OBJECT", properties: { name: {type: "STRING"}, value: {type: "STRING"} } } }
         },
         required: ['name', 'category']
     }
@@ -62,28 +51,20 @@ export const createOtherReportFunctionDeclaration: FunctionDeclaration = {
 
 export const updateOtherReportKpiFunctionDeclaration: FunctionDeclaration = {
     name: 'updateOtherReportKpi',
-    description: 'Обновляет значение KPI в существующем отчете.',
+    description: 'Обновляет KPI.',
     parameters: {
         type: "OBJECT",
-        properties: {
-            reportName: { type: "STRING" },
-            kpiName: { type: "STRING" },
-            newValue: { type: "STRING" }
-        },
+        properties: { reportName: { type: "STRING" }, kpiName: { type: "STRING" }, newValue: { type: "STRING" } },
         required: ['reportName', 'kpiName', 'newValue']
     }
 };
 
 export const updateCommercialProposalFunctionDeclaration: FunctionDeclaration = {
     name: 'updateCommercialProposal',
-    description: 'Обновляет поле в существующем КП.',
+    description: 'Обновляет КП.',
     parameters: {
         type: "OBJECT",
-        properties: {
-            company: { type: "STRING" },
-            fieldToUpdate: { type: "STRING", enum: ['status', 'amount', 'item'] },
-            newValue: { type: "STRING" }
-        },
+        properties: { company: { type: "STRING" }, fieldToUpdate: { type: "STRING" }, newValue: { type: "STRING" } },
         required: ['company', 'fieldToUpdate', 'newValue']
     }
 };
@@ -106,7 +87,6 @@ export const analyzeReportImage = async (mimeType: string, base64Data: string): 
     });
     return cleanJson(response.text());
 };
-
 export const analyzeProposalsImage = async (mimeType: string, base64Data: string): Promise<any> => {
     const apiKey = import.meta.env.VITE_GOOGLE_API_KEY;
     if (!apiKey) throw new Error("API Key not found");
@@ -118,7 +98,6 @@ export const analyzeProposalsImage = async (mimeType: string, base64Data: string
     });
     return JSON.parse(cleanJson(response.text()));
 };
-
 export const analyzeCampaignsImage = async (mimeType: string, base64Data: string): Promise<any[]> => {
     const apiKey = import.meta.env.VITE_GOOGLE_API_KEY;
     if (!apiKey) throw new Error("API Key not found");
@@ -130,7 +109,6 @@ export const analyzeCampaignsImage = async (mimeType: string, base64Data: string
     });
     return JSON.parse(cleanJson(response.text()));
 };
-
 export const analyzePaymentInvoice = async (mimeType: string, base64Data: string): Promise<any> => {
     const apiKey = import.meta.env.VITE_GOOGLE_API_KEY;
     if (!apiKey) throw new Error("API Key not found");
@@ -142,12 +120,10 @@ export const analyzePaymentInvoice = async (mimeType: string, base64Data: string
     });
     return JSON.parse(cleanJson(response.text()));
 };
-
 export const analyzeDataConsistency = async (reports: any[]): Promise<string> => {
     const apiKey = import.meta.env.VITE_GOOGLE_API_KEY;
     if (!apiKey) throw new Error("API Key not found");
     const client = new GoogleGenAI({ apiKey });
-
     const response = await client.models.generateContent({
         model: "models/gemini-2.0-flash-exp",
         contents: [{ role: "user", parts: [{ text: `Analyze: ${JSON.stringify(reports.slice(-5))}` }] }]
@@ -155,7 +131,7 @@ export const analyzeDataConsistency = async (reports: any[]): Promise<string> =>
     return response.text() || "Error";
 };
 
-// --- ГЛАВНАЯ ФУНКЦИЯ ТЕКСТОВОГО ЧАТА ---
+// --- ГЛАВНАЯ ФУНКЦИЯ ТЕКСТОВОГО ЧАТА (ИСПРАВЛЕНА) ---
 export const getAIAssistantResponse = async (prompt: string, userData: UserData, systemInstruction: string) => {
     const apiKey = import.meta.env.VITE_GOOGLE_API_KEY;
     if (!apiKey) throw new Error("API Key not found");
@@ -163,15 +139,15 @@ export const getAIAssistantResponse = async (prompt: string, userData: UserData,
     const client = new GoogleGenAI({ apiKey });
     
     try {
-        const chat = client.chats.create({
+        // ИСПОЛЬЗУЕМ generateContent НАПРЯМУЮ (БЕЗ createChat)
+        // Это решает проблему ContentUnion
+        const response = await client.models.generateContent({
             model: "models/gemini-2.0-flash-exp",
             config: {
-                // Передаем инструкцию строкой, это надежнее для этой версии
-                systemInstruction: systemInstruction,
+                systemInstruction: {
+                    parts: [{ text: systemInstruction }]
+                },
                 tools: [
-                    // Если включение googleSearch вызывает ошибку 400 вместе с функциями,
-                    // то, к сожалению, в текущей версии API придется выбрать что-то одно.
-                    // Я пока включил оба, но если снова будет 400 - уберите строку ниже.
                     { googleSearch: {} }, 
                     { functionDeclarations: [
                         navigationFunctionDeclaration,
@@ -181,19 +157,22 @@ export const getAIAssistantResponse = async (prompt: string, userData: UserData,
                         updateCommercialProposalFunctionDeclaration
                     ]}
                 ]
-            }
+            },
+            contents: [
+                {
+                    role: "user",
+                    parts: [{ text: prompt }]
+                }
+            ]
         });
 
-        // ИСПРАВЛЕНИЕ: Передаем просто строку prompt, библиотека сама обернет её как надо
-        const result = await chat.sendMessage(prompt);
-        
-        const functionCalls = result.functionCalls();
+        const functionCalls = response.functionCalls();
         
         if (functionCalls && functionCalls.length > 0) {
             return { text: null, functionCall: functionCalls[0] };
         }
 
-        return { text: result.text(), functionCall: null };
+        return { text: response.text(), functionCall: null };
         
     } catch (error: any) {
         console.error("GEMINI ERROR:", error);
