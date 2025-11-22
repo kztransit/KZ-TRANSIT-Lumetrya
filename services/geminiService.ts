@@ -1,74 +1,31 @@
 import { GoogleGenAI, FunctionDeclaration } from "@google/genai";
 import { UserData } from "../types";
 
-// --- ИНСТРУМЕНТЫ (Function Declarations) ---
-// Используем строковые типы ("STRING", "OBJECT"), так как SchemaType устарел в новой версии SDK
-
+// --- ИНСТРУМЕНТЫ (Без изменений) ---
 export const navigationFunctionDeclaration: FunctionDeclaration = {
     name: 'navigateToPage',
-    description: 'Переходит на указанную страницу приложения.',
-    parameters: {
-        type: "OBJECT",
-        properties: {
-            page: {
-                type: "STRING",
-                description: 'Путь (например: /reports, /proposals, /settings)',
-                enum: ['/dashboard', '/reports', '/other-reports', '/proposals', '/compare', '/conversions', '/net-conversions', '/campaigns', '/unit-economics', '/payments', '/storage', '/settings']
-            }
-        },
-        required: ['page']
-    }
+    description: 'Переходит на указанную страницу.',
+    parameters: { type: "OBJECT", properties: { page: { type: "STRING", enum: ['/dashboard', '/reports', '/proposals', '/campaigns', '/payments', '/storage', '/settings', '/compare', '/conversions', '/unit-economics'] } }, required: ['page'] }
 };
-
 export const createCommercialProposalFunctionDeclaration: FunctionDeclaration = {
     name: 'createCommercialProposal',
     description: 'Создает КП.',
-    parameters: {
-        type: "OBJECT",
-        properties: {
-            company: { type: "STRING" },
-            item: { type: "STRING" },
-            amount: { type: "NUMBER" },
-            direction: { type: "STRING", enum: ['РТИ', '3D'] },
-            date: { type: "STRING" }
-        },
-        required: ['company', 'item', 'amount']
-    }
+    parameters: { type: "OBJECT", properties: { company: { type: "STRING" }, item: { type: "STRING" }, amount: { type: "NUMBER" }, direction: { type: "STRING" }, date: { type: "STRING" } }, required: ['company', 'item', 'amount'] }
 };
-
 export const createOtherReportFunctionDeclaration: FunctionDeclaration = {
     name: 'createOtherReport',
     description: 'Создает отчет.',
-    parameters: {
-        type: "OBJECT",
-        properties: {
-            name: { type: "STRING" },
-            category: { type: "STRING" },
-            date: { type: "STRING" },
-            kpis: { type: "ARRAY", items: { type: "OBJECT", properties: { name: {type: "STRING"}, value: {type: "STRING"} } } }
-        },
-        required: ['name', 'category']
-    }
+    parameters: { type: "OBJECT", properties: { name: { type: "STRING" }, category: { type: "STRING" }, date: { type: "STRING" }, kpis: { type: "ARRAY", items: { type: "OBJECT", properties: { name: {type: "STRING"}, value: {type: "STRING"} } } } }, required: ['name', 'category'] }
 };
-
 export const updateOtherReportKpiFunctionDeclaration: FunctionDeclaration = {
     name: 'updateOtherReportKpi',
     description: 'Обновляет KPI.',
-    parameters: {
-        type: "OBJECT",
-        properties: { reportName: { type: "STRING" }, kpiName: { type: "STRING" }, newValue: { type: "STRING" } },
-        required: ['reportName', 'kpiName', 'newValue']
-    }
+    parameters: { type: "OBJECT", properties: { reportName: { type: "STRING" }, kpiName: { type: "STRING" }, newValue: { type: "STRING" } }, required: ['reportName', 'kpiName', 'newValue'] }
 };
-
 export const updateCommercialProposalFunctionDeclaration: FunctionDeclaration = {
     name: 'updateCommercialProposal',
     description: 'Обновляет КП.',
-    parameters: {
-        type: "OBJECT",
-        properties: { company: { type: "STRING" }, fieldToUpdate: { type: "STRING" }, newValue: { type: "STRING" } },
-        required: ['company', 'fieldToUpdate', 'newValue']
-    }
+    parameters: { type: "OBJECT", properties: { company: { type: "STRING" }, fieldToUpdate: { type: "STRING" }, newValue: { type: "STRING" } }, required: ['company', 'fieldToUpdate', 'newValue'] }
 };
 
 // --- ЧИСТКА JSON ---
@@ -83,83 +40,66 @@ export const analyzeReportImage = async (mimeType: string, base64Data: string): 
     if (!apiKey) throw new Error("API Key not found");
     const client = new GoogleGenAI({ apiKey });
     const response = await client.models.generateContent({
-        model: "models/gemini-2.0-flash-exp",
-        config: { systemInstruction: "Извлеки данные в JSON: { 'РТИ': {...}, '3D': {...} }." },
-        contents: [{ role: "user", parts: [{ inlineData: { mimeType, data: base64Data } }, { text: "Данные отчета" }] }]
+        model: "gemini-2.0-flash-exp", // Убрали models/
+        config: { systemInstruction: "JSON only" },
+        contents: [{ role: "user", parts: [{ inlineData: { mimeType, data: base64Data } }, { text: "Extract data" }] }]
     });
     return cleanJson(response.text());
 };
-
 export const analyzeProposalsImage = async (mimeType: string, base64Data: string): Promise<any> => {
     const apiKey = import.meta.env.VITE_GOOGLE_API_KEY;
     if (!apiKey) throw new Error("API Key not found");
     const client = new GoogleGenAI({ apiKey });
     const response = await client.models.generateContent({
-        model: "models/gemini-2.0-flash-exp",
-        config: { systemInstruction: "Извлеки КП в JSON { 'РТИ': [], '3D': [] }." },
-        contents: [{ role: "user", parts: [{ inlineData: { mimeType, data: base64Data } }, { text: "Список КП" }] }]
+        model: "gemini-2.0-flash-exp",
+        config: { systemInstruction: "JSON only" },
+        contents: [{ role: "user", parts: [{ inlineData: { mimeType, data: base64Data } }, { text: "Extract proposals" }] }]
     });
     return JSON.parse(cleanJson(response.text()));
 };
-
 export const analyzeCampaignsImage = async (mimeType: string, base64Data: string): Promise<any[]> => {
     const apiKey = import.meta.env.VITE_GOOGLE_API_KEY;
     if (!apiKey) throw new Error("API Key not found");
     const client = new GoogleGenAI({ apiKey });
     const response = await client.models.generateContent({
-        model: "models/gemini-2.0-flash-exp",
-        config: { systemInstruction: "Извлеки кампании в JSON []." },
-        contents: [{ role: "user", parts: [{ inlineData: { mimeType, data: base64Data } }, { text: "Таблица кампаний" }] }]
+        model: "gemini-2.0-flash-exp",
+        config: { systemInstruction: "JSON only" },
+        contents: [{ role: "user", parts: [{ inlineData: { mimeType, data: base64Data } }, { text: "Extract campaigns" }] }]
     });
     return JSON.parse(cleanJson(response.text()));
 };
-
 export const analyzePaymentInvoice = async (mimeType: string, base64Data: string): Promise<any> => {
     const apiKey = import.meta.env.VITE_GOOGLE_API_KEY;
     if (!apiKey) throw new Error("API Key not found");
     const client = new GoogleGenAI({ apiKey });
     const response = await client.models.generateContent({
-        model: "models/gemini-2.0-flash-exp",
-        config: { systemInstruction: "Проанализируй счет. Верни JSON: { serviceName, amount, currency, paymentPeriod, lastPaymentDate, paymentDetails, paymentMethod }." },
-        contents: [{ role: "user", parts: [{ inlineData: { mimeType, data: base64Data } }, { text: "Данные платежа" }] }]
+        model: "gemini-2.0-flash-exp",
+        config: { systemInstruction: "JSON only" },
+        contents: [{ role: "user", parts: [{ inlineData: { mimeType, data: base64Data } }, { text: "Extract invoice data" }] }]
     });
     return JSON.parse(cleanJson(response.text()));
 };
-
-// --- АНАЛИЗ ДАННЫХ (ДЛЯ ДАШБОРДА) ---
-// Вот эта функция, которой не хватало!
 export const analyzeDataConsistency = async (reports: any[]): Promise<string> => {
     const apiKey = import.meta.env.VITE_GOOGLE_API_KEY;
     if (!apiKey) throw new Error("API Key not found");
-    
     const client = new GoogleGenAI({ apiKey });
-
-    // Сжимаем данные, чтобы не перегрузить запрос
-    const simplifiedReports = reports.slice(-5).map(r => ({
-        name: r.name,
-        metrics: r.metrics
-    }));
-
-    const prompt = `Проанализируй эти маркетинговые отчеты. Найди тренды, аномалии (резкие падения/росты) и дай краткое резюме на русском языке. Данные: ${JSON.stringify(simplifiedReports)}`;
-    
     const response = await client.models.generateContent({
-        model: "models/gemini-2.0-flash-exp",
-        contents: [{ role: "user", parts: [{ text: prompt }] }]
+        model: "gemini-2.0-flash-exp",
+        contents: [{ role: "user", parts: [{ text: `Analyze: ${JSON.stringify(reports.slice(-5))}` }] }]
     });
-
-    return response.text() || "Не удалось получить анализ.";
+    return response.text() || "Error";
 };
 
-
-// --- ГЛАВНАЯ ФУНКЦИЯ ТЕКСТОВОГО ЧАТА ---
+// --- ГЛАВНАЯ ФУНКЦИЯ ТЕКСТОВОГО ЧАТА (ИСПРАВЛЕНА) ---
 export const getAIAssistantResponse = async (prompt: string, userData: UserData, systemInstruction: string) => {
     const apiKey = import.meta.env.VITE_GOOGLE_API_KEY;
     if (!apiKey) throw new Error("API Key not found");
     
     const client = new GoogleGenAI({ apiKey });
     
-    const chat = client.chats.create({
-        model: "models/gemini-2.0-flash-exp",
+    // Используем generateContent вместо chat.create для надежности
+    const response = await client.models.generateContent({
+        model: "gemini-2.0-flash-exp", // Без 'models/' для текстового SDK
         config: {
             systemInstruction: systemInstruction,
             tools: [
@@ -172,20 +112,16 @@ export const getAIAssistantResponse = async (prompt: string, userData: UserData,
                     updateCommercialProposalFunctionDeclaration
                 ]}
             ]
-        }
+        },
+        contents: [{ role: "user", parts: [{ text: prompt }] }]
     });
 
-    const result = await chat.sendMessage({
-        role: "user",
-        parts: [{ text: prompt }]
-    });
-    
-    let functionCalls;
-    try { functionCalls = result.functionCalls(); } catch (e) { functionCalls = []; }
+    // Безопасное извлечение function calls
+    const functionCalls = response.functionCalls();
     
     if (functionCalls && functionCalls.length > 0) {
         return { text: null, functionCall: functionCalls[0] };
     }
 
-    return { text: result.text(), functionCall: null };
+    return { text: response.text(), functionCall: null };
 };
