@@ -3,7 +3,7 @@ import { HashRouter, Routes, Route, Navigate, useNavigate } from 'react-router-d
 import { v4 as uuidv4 } from 'uuid';
 import { GoogleGenAI, LiveSession, LiveServerMessage, Modality, Blob } from "@google/genai";
 import { decode, decodeAudioData, encode } from './utils';
-// ДОБАВЛЕН ИМПОРТ navigationFunctionDeclaration
+// Импортируем инструменты, которые мы определили в сервисе
 import { navigationFunctionDeclaration, createCommercialProposalFunctionDeclaration } from './services/geminiService';
 
 import Sidebar from './components/Sidebar';
@@ -25,6 +25,7 @@ import VoiceAssistantOverlay from './components/VoiceAssistantOverlay';
 import { initialUserData, mockUser } from './services/mockData';
 import { User, UserData, Report, CommercialProposal, AdCampaign, Link, StoredFile, CompanyProfile, Payment, OtherReport } from './types';
 
+// Импорт API Supabase
 import { 
   fetchFullUserData, 
   apiAddReport, apiUpdateReport, apiDeleteReport,
@@ -45,26 +46,33 @@ const App: React.FC = () => {
     const [currentUser, setCurrentUser] = useState<User | null>(null);
     const [isSidebarOpen, setSidebarOpen] = useState<boolean>(true);
     
+    // Состояние голосового ассистента
     const [isVoiceControlActive, setIsVoiceControlActive] = useState(false);
     const [voiceStatus, setVoiceStatus] = useState<'idle' | 'greeting' | 'listening' | 'speaking'>('idle');
     const [liveUserTranscript, setLiveUserTranscript] = useState('');
     const [liveAiTranscript, setLiveAiTranscript] = useState('');
 
+    // Рефы для аудио
     const sessionRef = useRef<LiveSession | null>(null);
     const inputAudioContextRef = useRef<AudioContext | null>(null);
     const outputAudioContextRef = useRef<AudioContext | null>(null);
     const scriptProcessorRef = useRef<ScriptProcessorNode | null>(null);
     const mediaStreamRef = useRef<MediaStream | null>(null);
     const mediaStreamSourceRef = useRef<MediaStreamAudioSourceNode | null>(null);
+    const audioSourcesRef = useRef(new Set<AudioBufferSourceNode>());
+    const userTranscriptRef = useRef('');
+    const aiTranscriptRef = useRef('');
     
+    // Загрузка данных
     useEffect(() => {
         const loadData = async () => {
             setIsLoadingData(true);
             try {
                 const data = await fetchFullUserData();
                 setUserData(data);
+                console.log("Lumi: Данные успешно синхронизированы с облаком.");
             } catch (error) {
-                console.error("Error:", error);
+                console.error("Ошибка загрузки данных:", error);
             } finally {
                 setIsLoadingData(false);
             }
@@ -72,11 +80,12 @@ const App: React.FC = () => {
         loadData();
     }, []);
 
+    // Тема
     useEffect(() => {
         document.documentElement.classList.remove('dark');
     }, [userData.companyProfile.darkModeEnabled]);
 
-    // ... (Авторизация - оставляем как есть)
+    // Авторизация
     useEffect(() => {
         const rememberedUserJSON = localStorage.getItem('rememberedUser');
         if (rememberedUserJSON) {
@@ -86,50 +95,66 @@ const App: React.FC = () => {
             } catch (e) { localStorage.removeItem('rememberedUser'); }
         }
     }, []);
+
     const handleLogin = useCallback((e: string, p: string, r: boolean) => {
         if (e === mockUser.email && p === mockUser.password) {
             setCurrentUser({...mockUser});
             if(r) localStorage.setItem('rememberedUser', JSON.stringify({...mockUser}));
+            else localStorage.removeItem('rememberedUser');
             return true;
         } return false;
     }, []);
-    const handleLogout = useCallback(() => { setCurrentUser(null); localStorage.removeItem('rememberedUser'); }, []);
+
+    const handleLogout = useCallback(() => {
+        setCurrentUser(null);
+        localStorage.removeItem('rememberedUser');
+    }, []);
     
-    // ... (CRUD функции - оставляем как есть, они работают)
+    // CRUD функции (Обертки над API)
     const crudFunctions = useMemo(() => ({
         setReports: (u: any) => setUserData(p => ({ ...p, reports: typeof u === 'function' ? u(p.reports) : u })),
         addReport: async (i: any) => { const n = { ...i, id: uuidv4() }; await apiAddReport(n); setUserData(p => ({ ...p, reports: [n, ...p.reports] })); },
         updateReport: async (i: any) => { await apiUpdateReport(i); setUserData(p => ({ ...p, reports: p.reports.map(r => r.id === i.id ? i : r) })); },
         deleteReport: async (id: string) => { await apiDeleteReport(id); setUserData(p => ({ ...p, reports: p.reports.filter(r => r.id !== id) })); },
+        
         addOtherReport: async (i: any) => { const n = { ...i, id: uuidv4() }; await apiAddOtherReport(n); setUserData(p => ({ ...p, otherReports: [n, ...p.otherReports] })); },
         updateOtherReport: async (i: any) => { await apiUpdateOtherReport(i); setUserData(p => ({ ...p, otherReports: p.otherReports.map(r => r.id === i.id ? i : r) })); },
         deleteOtherReport: async (id: string) => { await apiDeleteOtherReport(id); setUserData(p => ({ ...p, otherReports: p.otherReports.filter(r => r.id !== id) })); },
+        
         setProposals: (u: any) => setUserData(p => ({ ...p, proposals: typeof u === 'function' ? u(p.proposals) : u })),
         addProposal: async (i: any) => { const n = { ...i, id: uuidv4() }; await apiAddProposal(n); setUserData(p => ({ ...p, proposals: [n, ...p.proposals] })); },
         updateProposal: async (i: any) => { await apiUpdateProposal(i); setUserData(p => ({ ...p, proposals: p.proposals.map(r => r.id === i.id ? i : r) })); },
         addMultipleProposals: async (l: any[]) => { const n = l.map(i => ({ ...i, id: uuidv4() })); for(const x of n) await apiAddProposal(x); setUserData(p => ({ ...p, proposals: [...n, ...p.proposals] })); },
         deleteProposal: async (id: string) => { await apiDeleteProposal(id); setUserData(p => ({ ...p, proposals: p.proposals.filter(r => r.id !== id) })); },
+        
         setCampaigns: (u: any) => setUserData(p => ({ ...p, campaigns: typeof u === 'function' ? u(p.campaigns) : u })),
         addCampaign: async (i: any) => { const n = { ...i, id: uuidv4() }; await apiAddCampaign(n); setUserData(p => ({ ...p, campaigns: [n, ...p.campaigns] })); },
         addMultipleCampaigns: async (l: any[]) => { const n = l.map(i => ({ ...i, id: uuidv4() })); for(const x of n) await apiAddCampaign(x); setUserData(p => ({ ...p, campaigns: [...n, ...p.campaigns] })); },
         deleteCampaign: async (id: string) => { await apiDeleteCampaign(id); setUserData(p => ({ ...p, campaigns: p.campaigns.filter(r => r.id !== id) })); },
+        
         addLink: async (i: any) => { const n = { ...i, id: uuidv4() }; await apiAddLink(n); setUserData(p => ({ ...p, links: [n, ...p.links] })); },
         deleteLink: async (id: string) => { await apiDeleteLink(id); setUserData(p => ({ ...p, links: p.links.filter(r => r.id !== id) })); },
+        
         addFile: async (i: any) => { const n = { ...i, id: uuidv4() }; await apiAddFile(n); setUserData(p => ({ ...p, files: [n, ...p.files] })); return n; },
         deleteFile: async (id: string) => { await apiDeleteFile(id); setUserData(p => ({ ...p, files: p.files.filter(r => r.id !== id) })); },
+        
         addPayment: async (i: any) => { const n = { ...i, id: uuidv4() }; await apiAddPayment(n); setUserData(p => ({ ...p, payments: [n, ...p.payments] })); },
         updatePayment: async (i: any) => { await apiUpdatePayment(i); setUserData(p => ({ ...p, payments: p.payments.map(r => r.id === i.id ? i : r) })); },
         deletePayment: async (id: string) => { await apiDeletePayment(id); setUserData(p => ({ ...p, payments: p.payments.filter(r => r.id !== id) })); },
+        
         setCompanyProfile: async (i: any) => { await apiUpdateCompanyProfile(i); setUserData(p => ({ ...p, companyProfile: i })); },
         setAllUserData: (d: UserData) => { setUserData(d); },
     }), []);
     
     const navigate = useNavigate();
-    // Адаптер навигации для AI
+    
+    // --- УМНАЯ НАВИГАЦИЯ ---
     const handleNavigation = (page: string) => {
+        console.log("Lumi переходит на:", page);
         navigate(page);
     };
 
+    // --- ОЧИСТКА СЕССИИ (Чтобы не было утечек памяти) ---
     const cleanupVoiceSession = useCallback(() => {
         mediaStreamRef.current?.getTracks().forEach(track => track.stop());
         if (scriptProcessorRef.current) {
@@ -139,56 +164,68 @@ const App: React.FC = () => {
         mediaStreamSourceRef.current?.disconnect();
         inputAudioContextRef.current?.close().catch(console.error);
         outputAudioContextRef.current?.close().catch(console.error);
+
+        mediaStreamRef.current = null;
+        scriptProcessorRef.current = null;
+        mediaStreamSourceRef.current = null;
+        inputAudioContextRef.current = null;
+        outputAudioContextRef.current = null;
+        sessionRef.current = null;
+        
         setIsVoiceControlActive(false);
         setVoiceStatus('idle');
     }, []);
 
-    useEffect(() => { return () => { sessionRef.current?.close(); cleanupVoiceSession(); }; }, [cleanupVoiceSession]);
+    useEffect(() => {
+        return () => { 
+            if (sessionRef.current) sessionRef.current.close(); 
+            cleanupVoiceSession(); 
+        };
+    }, [cleanupVoiceSession]);
 
-    // --- УЛУЧШЕННЫЙ ГЕНЕРАТОР КОНТЕКСТА ---
+    // --- ГЕНЕРАТОР КОНТЕКСТА (OPTIMIZED + SEARCH + NAVIGATION) ---
     const generateContext = (data: UserData) => {
         const today = new Date().toLocaleDateString('ru-RU');
         
-        // Форматируем данные, чтобы AI их точно понял
-        // Важно: Используем JSON.stringify для надежности, но "обрезаем" лишнее в голове AI через промпт
-        
+        // Сжатие данных в текстовый формат для стабильности
+        // Мы не теряем данные, мы просто убираем лишний синтаксис JSON
+        const reportStr = data.reports.map(r => `ОТЧЕТ[${r.name}|${r.creationDate}]:Sales=${r.metrics.sales},Leads=${r.metrics.leads},Bud=${r.metrics.budget}`).join('; ');
+        const propStr = data.proposals.map(p => `КП[${p.company}|${p.item}|${p.amount}тг|${p.status}|${p.date}]`).join('; ');
+        const campStr = data.campaigns.map(c => `РЕКЛАМА[${c.name}|${c.status}|Spend=${c.spend}|Conv=${c.conversions}]`).join('; ');
+        const payStr = data.payments.map(p => `ПЛАТЕЖ[${p.serviceName}|${p.amount}${p.currency}|${p.nextPaymentDate}]`).join('; ');
+        const linksStr = data.links.map(l => `LINK[${l.url}|${l.comment}]`).join('; ');
+        const empStr = data.companyProfile.employees.map(e => `${e.name}(${e.position})`).join(', ');
+
         return `
-        ДАТА: ${today}
-        ТВОЕ ИМЯ: Люми.
-        РОЛЬ: Старший бизнес-аналитик компании ${data.companyProfile.companyName}.
-
-        === ПРАВИЛА РАЗГОВОРА (ОЧЕНЬ ВАЖНО) ===
-        1. 🔢 ЧИСЛА ГОВОРИ СЛОВАМИ:
-           - ТЫ ОБЯЗАНА ПЕРЕВОДИТЬ ЦИФРЫ В СЛОВА.
-           - Не говори "50000", говори "пятьдесят тысяч".
-           - Не говори "10%", говори "десять процентов".
-           - Валюту "₸" читай как "тенге".
-        2. 🇷🇺 ЯЗЫК: Только Русский.
-        3. 🔇 КРАТКОСТЬ:
-           - Отвечай МАКСИМАЛЬНО КОРОТКО (1 предложение), если не просят подробностей.
-        4. 🛑 СТОП: Если слышишь "Стоп" - замолкай.
-
-        === ТВОИ ИНСТРУКЦИИ И НАВЫКИ ===
-        1. 🧭 НАВИГАЦИЯ:
-           - У тебя есть инструмент [navigateToPage].
-           - Если просят "Открой отчеты", "Перейди в настройки", "Покажи КП" -> ВЫЗЫВАЙ ЭТУ ФУНКЦИЮ.
-           - Карта: /dashboard, /reports, /proposals, /campaigns, /payments, /storage, /settings.
+        ДАТА СЕГОДНЯ: ${today}
+        ИМЯ: Люми.
+        РОЛЬ: Старший аналитик, инженер, оператор системы для ${data.companyProfile.companyName}.
         
-        2. 🌐 ИНТЕРНЕТ:
-           - У тебя есть [googleSearch]. Ищи курсы валют, факты, ГОСТы.
+        === ТВОИ ВОЗМОЖНОСТИ И ИНСТРУМЕНТЫ ===
+        1. 🌐 [googleSearch]: Используй для поиска в интернете (курсы валют, законы, ГОСТы, факты).
+        2. 🧭 [navigateToPage]: Используй для переключения вкладок сайта. Карта: /dashboard, /reports, /proposals, /campaigns, /payments, /storage, /settings, /unit-economics.
+        3. 📝 [createCommercialProposal]: Создавай КП по команде.
+        
+        === ПРАВИЛА ОБЩЕНИЯ (СТРОГО) ===
+        - ГОЛОС: Отвечай КРАТКО (1-2 предложения), четко, без воды. Подробно - только если спросят.
+        - ЯЗЫК: Русский. Если просят перевод - переводи.
+        - ЧИСЛА: Произноси СЛОВАМИ ("пять тысяч", "десять процентов", "тенге"). Не говори цифрами.
+        - КОМАНДА "СТОП": Замолкай немедленно.
 
-        3. 📊 ДАННЫЕ КОМПАНИИ (ТЫ ВИДИШЬ ВСЁ):
-           - Профиль: ${JSON.stringify(data.companyProfile.details)}
-           - Отчеты (Reports): ${JSON.stringify(data.reports)}
-           - КП (Proposals): ${JSON.stringify(data.proposals)}
-           - Реклама (Campaigns): ${JSON.stringify(data.campaigns)}
-           - Платежи (Payments): ${JSON.stringify(data.payments)}
-           - Разное: ${JSON.stringify(data.otherReports)}
-           
-        СИСТЕМНАЯ ИНСТРУКЦИЯ: ${data.companyProfile.aiSystemInstruction}
+        === ПОЛНАЯ БАЗА ДАННЫХ (СЖАТАЯ) ===
+        ПРОФИЛЬ: ${JSON.stringify(data.companyProfile.details)}
+        СОТРУДНИКИ: ${empStr}
+        ОТЧЕТЫ: ${reportStr || "Нет"}
+        КП: ${propStr || "Нет"}
+        РЕКЛАМА: ${campStr || "Нет"}
+        ПЛАТЕЖИ: ${payStr || "Нет"}
+        ССЫЛКИ: ${linksStr || "Нет"}
+        
+        ИНСТРУКЦИЯ ПОЛЬЗОВАТЕЛЯ: ${data.companyProfile.aiSystemInstruction}
         `;
     };
 
+    // --- ЗАПУСК ГОЛОСОВОЙ СЕССИИ ---
     const handleToggleVoiceControl = async () => {
         if (isVoiceControlActive) {
             sessionRef.current?.close();
@@ -203,90 +240,106 @@ const App: React.FC = () => {
         aiTranscriptRef.current = '';
 
         const apiKey = import.meta.env.VITE_GOOGLE_API_KEY;
-        if (!apiKey) { alert("API Key not found"); cleanupVoiceSession(); return; }
+        if (!apiKey) {
+            alert("Ошибка: Не найден API ключ (VITE_GOOGLE_API_KEY).");
+            cleanupVoiceSession();
+            return;
+        }
         
         try {
             const ai = new GoogleGenAI({ apiKey: apiKey });
             const fullContext = generateContext(userData);
 
             const sessionPromise = ai.live.connect({
+                // Используем проверенную модель
                 model: 'models/gemini-2.0-flash-exp',
                 config: {
                     responseModalities: [Modality.AUDIO],
                     speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName: 'Zephyr' } } },
                     systemInstruction: fullContext,
+                    inputAudioTranscription: {},
+                    outputAudioTranscription: {},
+                    // ПОДКЛЮЧАЕМ ВСЕ ИНСТРУМЕНТЫ
                     tools: [
-                        { googleSearch: {} }, // Интернет
-                        // ВАЖНО: Добавляем навигацию сюда
+                        { googleSearch: {} }, 
                         { functionDeclarations: [navigationFunctionDeclaration, createCommercialProposalFunctionDeclaration] }
                     ],
                 },
                 callbacks: {
                     onopen: async () => {
                         const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+                        mediaStreamRef.current = stream;
+
+                        // "Будим" AudioContext для надежности в разных браузерах
+                        const AudioContextClass = window.AudioContext || (window as any).webkitAudioContext;
+                        const inputContext = new AudioContextClass({ sampleRate: 16000 });
+                        if (inputContext.state === 'suspended') await inputContext.resume();
+                        inputAudioContextRef.current = inputContext;
+
+                        outputAudioContextRef.current = new AudioContextClass({ sampleRate: 24000 });
                         
-                        // "Будим" AudioContext для надежности
-                        const AC = window.AudioContext || (window as any).webkitAudioContext;
-                        const inputCtx = new AC({ sampleRate: 16000 });
-                        if (inputCtx.state === 'suspended') await inputCtx.resume();
+                        mediaStreamSourceRef.current = inputAudioContextRef.current.createMediaStreamSource(stream);
+                        scriptProcessorRef.current = inputAudioContextRef.current.createScriptProcessor(4096, 1, 1);
                         
-                        inputAudioContextRef.current = inputCtx;
-                        outputAudioContextRef.current = new AC({ sampleRate: 24000 });
-                        
-                        mediaStreamSourceRef.current = inputCtx.createMediaStreamSource(stream);
-                        const processor = inputCtx.createScriptProcessor(4096, 1, 1);
-                        scriptProcessorRef.current = processor;
-                        
-                        processor.onaudioprocess = (e) => {
-                            const inputData = e.inputBuffer.getChannelData(0);
-                            const int16 = new Int16Array(inputData.length);
-                            for (let i = 0; i < inputData.length; i++) int16[i] = inputData[i] * 32768;
+                        scriptProcessorRef.current.onaudioprocess = (event) => {
+                            const inputData = event.inputBuffer.getChannelData(0);
+                            const l = inputData.length;
+                            const int16 = new Int16Array(l);
+                            for (let i = 0; i < l; i++) { int16[i] = inputData[i] * 32768; }
                             const pcmBlob: Blob = { data: encode(new Uint8Array(int16.buffer)), mimeType: 'audio/pcm;rate=16000' };
                             
+                            // Безопасная отправка с защитой от закрытого сокета
                             sessionPromise.then(session => {
-                                try { session.sendRealtimeInput({ media: pcmBlob }); } catch (err) {}
+                                try { session.sendRealtimeInput({ media: pcmBlob }); } catch (e) {}
                             });
                         };
-                        
-                        mediaStreamSourceRef.current.connect(processor);
-                        processor.connect(inputCtx.destination);
+                        mediaStreamSourceRef.current.connect(scriptProcessorRef.current);
+                        scriptProcessorRef.current.connect(inputAudioContextRef.current.destination);
+
                         setVoiceStatus('listening');
                     },
-                    onmessage: async (msg: LiveServerMessage) => {
-                        if (msg.serverContent?.outputTranscription) {
+                    onmessage: async (message: LiveServerMessage) => {
+                        if (message.serverContent?.outputTranscription) {
                             setVoiceStatus('speaking');
-                            aiTranscriptRef.current += msg.serverContent.outputTranscription.text;
+                            aiTranscriptRef.current += message.serverContent.outputTranscription.text;
                             setLiveAiTranscript(aiTranscriptRef.current);
                         }
-                        if (msg.serverContent?.inputTranscription) {
-                            userTranscriptRef.current += msg.serverContent.inputTranscription.text;
+                        if (message.serverContent?.inputTranscription) {
+                            userTranscriptRef.current += message.serverContent.inputTranscription.text;
                             setLiveUserTranscript(userTranscriptRef.current);
                         }
                         
-                        // ОБРАБОТКА ИНСТРУМЕНТОВ (НАВИГАЦИЯ И СОЗДАНИЕ)
-                        if (msg.toolCall) {
-                            for (const fc of msg.toolCall.functionCalls) {
-                                let result = "OK";
-                                if (fc.name === 'navigateToPage') {
-                                    handleNavigation(fc.args.page as string);
-                                    result = `Перешел на ${fc.args.page}`;
+                        // ОБРАБОТКА ИНСТРУМЕНТОВ (Tools)
+                        if (message.toolCall) {
+                            for (const fc of message.toolCall.functionCalls) {
+                                let functionResult = "Действие выполнено.";
+                                
+                                if (fc.name === 'navigateToPage' && fc.args.page) {
+                                   handleNavigation(fc.args.page as string);
+                                   functionResult = `Перешел на ${fc.args.page}`;
                                 }
+                                
                                 if (fc.name === 'createCommercialProposal') {
-                                    // Логика создания КП
-                                    const args: any = fc.args;
-                                    crudFunctions.addProposal({
-                                       date: args.date || new Date().toISOString().split('T')[0],
-                                       direction: args.direction || 'РТИ',
-                                       proposalNumber: `КП-AI-${Math.floor(Math.random()*1000)}`,
-                                       company: args.company, item: args.item, amount: args.amount, status: 'Ожидание', invoiceNumber: null, invoiceDate: null, paymentDate: null, paymentType: null
-                                    });
-                                    result = "КП создано";
+                                   const { company, item, amount, direction, date } = fc.args as any;
+                                   let normalizedDirection: 'РТИ' | '3D' = 'РТИ';
+                                   if (typeof direction === 'string' && direction.toUpperCase() === '3D') normalizedDirection = '3D';
+                                   
+                                   crudFunctions.addProposal({
+                                       date: date || new Date().toISOString().split('T')[0],
+                                       direction: normalizedDirection,
+                                       proposalNumber: `КП-${Math.floor(10000 + Math.random() * 90000)}`,
+                                       company: company, item: item, amount: amount, status: 'Ожидание', invoiceNumber: null, invoiceDate: null, paymentDate: null, paymentType: null,
+                                   });
+                                   functionResult = `КП для "${company}" на ${amount} создано.`;
                                 }
-                                sessionPromise.then(s => s.sendToolResponse({ functionResponses: { id: fc.id, name: fc.name, response: { result } } }));
+                                
+                                sessionPromise.then((session) => {
+                                   session.sendToolResponse({ functionResponses: { id: fc.id, name: fc.name, response: { result: functionResult } } });
+                                });
                             }
                         }
 
-                        if (msg.serverContent?.turnComplete) {
+                        if (message.serverContent?.turnComplete) {
                             userTranscriptRef.current = '';
                             aiTranscriptRef.current = '';
                             setTimeout(() => { 
@@ -295,47 +348,74 @@ const App: React.FC = () => {
                                 setVoiceStatus('listening'); 
                             }, 1500);
                         }
-                        
-                        // Воспроизведение звука
-                        const modelTurn = msg.serverContent?.modelTurn;
+
+                        const modelTurn = message.serverContent?.modelTurn;
                         if (modelTurn?.parts) {
                             for (const part of modelTurn.parts) {
                                 const base64Audio = part.inlineData?.data;
                                 if (base64Audio && outputAudioContextRef.current) {
-                                    const ctx = outputAudioContextRef.current;
-                                    const buffer = await decodeAudioData(decode(base64Audio), ctx, 24000, 1);
-                                    const source = ctx.createBufferSource();
-                                    source.buffer = buffer;
-                                    source.connect(ctx.destination);
-                                    source.start(0);
+                                    const outCtx = outputAudioContextRef.current;
+                                    nextStartTimeRef.current = Math.max(nextStartTimeRef.current, outCtx.currentTime);
+                                    const audioBuffer = await decodeAudioData(decode(base64Audio), outCtx, 24000, 1);
+                                    const source = outCtx.createBufferSource();
+                                    source.buffer = audioBuffer;
+                                    source.connect(outCtx.destination);
+                                    source.addEventListener('ended', () => { audioSourcesRef.current.delete(source); });
+                                    source.start(nextStartTimeRef.current);
+                                    nextStartTimeRef.current += audioBuffer.duration;
+                                    audioSourcesRef.current.add(source);
                                 }
                             }
                         }
                     },
                     onclose: cleanupVoiceSession,
                     onerror: (e: any) => {
-                        console.error(e);
-                        if (isVoiceControlActive) alert(`Ошибка соединения: ${e.message || "Сбой сети"}`);
+                        console.error("Live session error:", e);
+                        // Мягкая обработка ошибок
+                        if (isVoiceControlActive && !e.message?.includes("closing")) {
+                            alert(`Ошибка соединения с Люми: ${e.message || "Сбой сети"}. Попробуйте еще раз.`);
+                        }
                         cleanupVoiceSession();
-                    }
+                    },
                 }
             });
             sessionRef.current = await sessionPromise;
         } catch (err) {
-            alert("Не удалось подключиться.");
+            console.error("Failed to start voice session:", err);
+            alert("Не удалось подключиться к голосовому AI. Проверьте консоль.");
             cleanupVoiceSession();
         }
     };
     
-    if (isLoadingData) return <div className="flex h-screen items-center justify-center bg-gray-100"><div className="text-center"><Logo className="mx-auto h-14 w-auto"/><div className="mt-4 text-slate-500">Загрузка...</div></div></div>;
+    if (isLoadingData) {
+        return (
+            <div className="flex h-screen items-center justify-center bg-gray-100 dark:bg-slate-900">
+                <div className="text-center">
+                     <Logo className="mx-auto h-14 w-auto" />
+                     <div className="mt-4 text-slate-500 dark:text-slate-400">Загрузка системы...</div>
+                </div>
+            </div>
+        );
+    }
+
     if (!currentUser) return <LoginPage onLogin={handleLogin} />;
 
     return (
-            <div className="flex h-screen bg-gray-100 text-slate-800">
-                <Sidebar isOpen={isSidebarOpen} setOpen={setSidebarOpen} companyProfile={userData.companyProfile} setCompanyProfile={crudFunctions.setCompanyProfile} onLogout={handleLogout} isVoiceControlActive={isVoiceControlActive} onToggleVoiceControl={handleToggleVoiceControl} />
+            <div className="flex h-screen bg-gray-100 text-slate-800 dark:bg-slate-900 dark:text-slate-200">
+                <Sidebar 
+                    isOpen={isSidebarOpen} 
+                    setOpen={setSidebarOpen} 
+                    companyProfile={userData.companyProfile} 
+                    setCompanyProfile={crudFunctions.setCompanyProfile} 
+                    onLogout={handleLogout} 
+                    isVoiceControlActive={isVoiceControlActive} 
+                    onToggleVoiceControl={handleToggleVoiceControl} 
+                />
                 <div className="flex-1 flex flex-col overflow-hidden">
-                    <main className="flex-1 overflow-x-hidden overflow-y-auto bg-gray-100 p-4 sm:p-6 lg:p-8 relative">
-                        <button onClick={() => setSidebarOpen(!isSidebarOpen)} className="lg:hidden fixed top-4 left-4 z-20 p-2 bg-white/60 rounded-full shadow-md"><svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h16" /></svg></button>
+                    <main className="flex-1 overflow-x-hidden overflow-y-auto bg-gray-100 dark:bg-slate-900 p-4 sm:p-6 lg:p-8 relative">
+                        <button onClick={() => setSidebarOpen(!isSidebarOpen)} className="lg:hidden fixed top-4 left-4 z-20 p-2 bg-white/60 dark:bg-slate-800/60 backdrop-blur-sm rounded-full shadow-md">
+                            <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h16" /></svg>
+                        </button>
                         <Routes>
                             <Route path="/" element={<Navigate to="/dashboard" replace />} />
                             <Route path="/dashboard" element={<DashboardPage reports={userData.reports} proposals={userData.proposals}/>} />
