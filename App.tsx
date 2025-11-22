@@ -283,30 +283,22 @@ const App: React.FC = () => {
         Ты — старший бизнес-аналитик, главный инженер и технолог Lumi для компании ${data.companyProfile.companyName}.
         
         ТВОИ ВОЗМОЖНОСТИ И ЗНАНИЯ:
-        
         1. 💼 БИЗНЕС И ФИНАНСЫ (Из базы данных):
            - Анализируй отчеты, продажи, эффективность рекламы.
            - Находи ошибки в данных (несоответствие дат, странные скачки расходов).
            - Сравнивай периоды и давай стратегические советы.
 
         2. 🛠️ ТЕХНИЧЕСКИЙ ЭКСПЕРТ (Из твоей общей базы знаний LLM):
-           - Ты эксперт в **РТИ** (Резинотехнические изделия): свойства резины (МБС, ТМКЩ, EPDM, Силикон), температурные режимы, твердость по Шору, ГОСТы.
-           - Ты эксперт в **3D-печати**: материалы (PLA, ABS, PETG, Nylon, TPU), технологии (FDM, SLA), настройки печати.
-           - Ты умеешь делать **инженерные расчеты**:
-             * Рассчитать вес техпластины (зная размеры и плотность материала).
-             * Рассчитать объем детали.
-             * Рассчитать примерную себестоимость 3D-печати (зная вес детали и цену пластика).
-           - Давай технические консультации: "Какую резину выбрать для масла?", "Почему отлипает пластик от стола?".
+           - Ты эксперт в **РТИ** (Резинотехнические изделия) и **3D-печати**.
+           - Ты умеешь делать **инженерные расчеты** и давать консультации.
 
         ЯЗЫК И ГОЛОС:
         - Говори ИСКЛЮЧИТЕЛЬНО на РУССКОМ языке.
-        - ПРОИЗНОШЕНИЕ ЧИСЕЛ: Читай все цифры словами (5000 -> "пять тысяч", ₸ -> "тенге", мм -> "миллиметров").
-        - Не используй английское произношение для цифр.
+        - Читай все цифры словами.
 
         СИСТЕМНАЯ ИНСТРУКЦИЯ ОТ ПОЛЬЗОВАТЕЛЯ: ${data.companyProfile.aiSystemInstruction}
 
-        === АКТУАЛЬНЫЕ ДАННЫЕ КОМПАНИИ (ДЛЯ БИЗНЕС-ВОПРОСОВ) ===
-        Используй эти данные для ответов про деньги, клиентов и отчеты:
+        === АКТУАЛЬНЫЕ ДАННЫЕ КОМПАНИИ ===
         
         1. ПРОФИЛЬ: ${JSON.stringify(data.companyProfile.details)}
         2. ОТЧЕТЫ: ${JSON.stringify(data.reports)}
@@ -343,12 +335,11 @@ const App: React.FC = () => {
         
         try {
             const ai = new GoogleGenAI({ apiKey: apiKey });
-            
-            // Генерируем умный контекст
             const fullSystemInstruction = generateContext(userData);
 
             const sessionPromise = ai.live.connect({
-                model: 'gemini-2.0-flash-exp',
+                // ИСПОЛЬЗУЕМ ПРОВЕРЕННУЮ МОДЕЛЬ С ПРЕФИКСОМ
+                model: 'models/gemini-2.0-flash-exp', 
                 config: {
                     responseModalities: [Modality.AUDIO],
                     speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName: 'Zephyr' } } },
@@ -362,8 +353,16 @@ const App: React.FC = () => {
                         const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
                         mediaStreamRef.current = stream;
 
-                        inputAudioContextRef.current = new (window.AudioContext || (window as any).webkitAudioContext)({ sampleRate: 16000 });
-                        outputAudioContextRef.current = new (window.AudioContext || (window as any).webkitAudioContext)({ sampleRate: 24000 });
+                        // ИСПРАВЛЕНИЕ: ЯВНО РАЗРЕШАЕМ АУДИО КОНТЕКСТ
+                        const AudioContextClass = window.AudioContext || (window as any).webkitAudioContext;
+                        const inputContext = new AudioContextClass({ sampleRate: 16000 });
+                        
+                        if (inputContext.state === 'suspended') {
+                            await inputContext.resume();
+                        }
+                        inputAudioContextRef.current = inputContext;
+
+                        outputAudioContextRef.current = new AudioContextClass({ sampleRate: 24000 });
                         
                         mediaStreamSourceRef.current = inputAudioContextRef.current.createMediaStreamSource(stream);
                         scriptProcessorRef.current = inputAudioContextRef.current.createScriptProcessor(4096, 1, 1);
@@ -473,8 +472,15 @@ const App: React.FC = () => {
                         }
                     },
                     onclose: cleanupVoiceSession,
-                    onerror: (e: ErrorEvent) => {
+                    // ВЫВОД ОШИБКИ ДЛЯ ПОЛЬЗОВАТЕЛЯ
+                    onerror: (e: any) => {
                         console.error("Live session error:", e);
+                        const errorMsg = e.message || e.type || "Неизвестная ошибка";
+                        if (errorMsg.includes('404') || errorMsg.includes('not found')) {
+                            alert("Ошибка модели AI. Google изменил название модели. Попробуйте позже.");
+                        } else {
+                            alert(`Соединение разорвано: ${errorMsg}`);
+                        }
                         cleanupVoiceSession();
                     },
                 }
@@ -482,6 +488,7 @@ const App: React.FC = () => {
             sessionRef.current = await sessionPromise;
         } catch (err) {
             console.error("Failed to start voice session:", err);
+            alert("Не удалось подключиться к AI. Проверьте консоль.");
             cleanupVoiceSession();
         }
     };
