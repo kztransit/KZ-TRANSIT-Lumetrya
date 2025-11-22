@@ -207,11 +207,11 @@ const App: React.FC = () => {
 
     useEffect(() => { return () => stopEverything(); }, [stopEverything]);
 
-    // ГЕНЕРАЦИЯ КОНТЕКСТА (С фильтрацией токенов)
+    // --- ГЕНЕРАЦИЯ КОНТЕКСТА (ОБНОВЛЕННАЯ ИНСТРУКЦИЯ) ---
     const generateContext = (data: UserData) => {
         const today = new Date().toLocaleDateString('ru-RU');
         
-        // ОПТИМИЗАЦИЯ ТОКЕНОВ
+        // Фильтрация данных для экономии токенов
         const optimizedDb = {
             reports: data.reports.slice(0, 5).map(r => ({ name: r.name, metrics: r.metrics })),
             proposals: data.proposals.slice(0, 20).map(p => ({ company: p.company, item: p.item, amount: p.amount, status: p.status, direction: p.direction })),
@@ -221,12 +221,28 @@ const App: React.FC = () => {
             payments: data.payments.slice(0, 10)
         };
 
+        // ВОТ ЗДЕСЬ МЫ НАСТРАИВАЕМ ПОВЕДЕНИЕ ЛЮМИ
         return `
         SYSTEM_INSTRUCTION:
         DATE: ${today}
-        ROLE: Lumi, Эксперт KZ TRANSIT (Инженер РТИ/3D, Маркетолог).
-        LANG: PURE RUSSIAN (No accent).
-        CONTEXT_DATA_JSON: ${JSON.stringify(optimizedDb)}
+        
+        IDENTITY:
+        - Name: Lumi (Люми).
+        - Company: ТОО "KZ TRANSIT".
+        - Role: Эксперт-инженер и Маркетолог.
+
+        VOICE RULES (STRICT):
+        1. LANGUAGE: PURE RUSSIAN only. No accents.
+        2. NUMBERS: 
+           - Произноси цифры СЛОВАМИ для естественного звучания.
+           - Пример: "5000" -> "пять тысяч", "1.5M" -> "полтора миллиона".
+           - Валюту "KZT" читай как "тенге".
+        3. STYLE:
+           - Отвечай КРАТКО и ПО ДЕЛУ (1-2 предложения, если не просят отчет).
+           - Не повторяй вопрос пользователя.
+           - Не используй длинные вступления ("Согласно данным..."). Говори сразу суть.
+        
+        CONTEXT_DATA: ${JSON.stringify(optimizedDb)}
         USER_INSTRUCTION: ${data.companyProfile.aiSystemInstruction}
         `;
     };
@@ -283,7 +299,7 @@ const App: React.FC = () => {
                     speechConfig: { 
                         voiceConfig: { 
                             prebuiltVoiceConfig: { 
-                                // ИЗМЕНЕНИЕ: 'Aoede' - это женский профессиональный голос
+                                // 'Aoede' - Лучший женский голос для бизнес-ассистента
                                 voiceName: 'Aoede' 
                             } 
                         } 
