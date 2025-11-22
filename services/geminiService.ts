@@ -1,31 +1,73 @@
-import { GoogleGenAI, FunctionDeclaration } from "@google/genai";
+import { GoogleGenAI, FunctionDeclaration, SchemaType } from "@google/genai";
 import { UserData } from "../types";
 
-// --- ИНСТРУМЕНТЫ (Без изменений) ---
+// --- ОПРЕДЕЛЕНИЕ ФУНКЦИЙ (ИНСТРУМЕНТОВ) ---
+
 export const navigationFunctionDeclaration: FunctionDeclaration = {
     name: 'navigateToPage',
-    description: 'Переходит на указанную страницу.',
-    parameters: { type: "OBJECT", properties: { page: { type: "STRING", enum: ['/dashboard', '/reports', '/proposals', '/campaigns', '/payments', '/storage', '/settings', '/compare', '/conversions', '/unit-economics'] } }, required: ['page'] }
+    description: 'Переходит на указанную страницу приложения.',
+    parameters: {
+        type: "OBJECT",
+        properties: {
+            page: {
+                type: "STRING",
+                description: 'Путь (например: /reports, /proposals, /settings)',
+                enum: ['/dashboard', '/reports', '/other-reports', '/proposals', '/compare', '/conversions', '/net-conversions', '/campaigns', '/unit-economics', '/payments', '/storage', '/settings']
+            }
+        },
+        required: ['page']
+    }
 };
+
 export const createCommercialProposalFunctionDeclaration: FunctionDeclaration = {
     name: 'createCommercialProposal',
-    description: 'Создает КП.',
-    parameters: { type: "OBJECT", properties: { company: { type: "STRING" }, item: { type: "STRING" }, amount: { type: "NUMBER" }, direction: { type: "STRING" }, date: { type: "STRING" } }, required: ['company', 'item', 'amount'] }
+    description: 'Создает новое коммерческое предложение (КП).',
+    parameters: {
+        type: "OBJECT",
+        properties: {
+            company: { type: "STRING", description: 'Название компании' },
+            item: { type: "STRING", description: 'Товар/Услуга' },
+            amount: { type: "NUMBER", description: 'Сумма' },
+            direction: { type: "STRING", enum: ['РТИ', '3D'] },
+            date: { type: "STRING", description: 'YYYY-MM-DD' }
+        },
+        required: ['company', 'item', 'amount']
+    }
 };
+
 export const createOtherReportFunctionDeclaration: FunctionDeclaration = {
     name: 'createOtherReport',
     description: 'Создает отчет.',
-    parameters: { type: "OBJECT", properties: { name: { type: "STRING" }, category: { type: "STRING" }, date: { type: "STRING" }, kpis: { type: "ARRAY", items: { type: "OBJECT", properties: { name: {type: "STRING"}, value: {type: "STRING"} } } } }, required: ['name', 'category'] }
+    parameters: {
+        type: "OBJECT",
+        properties: {
+            name: { type: "STRING" },
+            category: { type: "STRING" },
+            date: { type: "STRING" },
+            kpis: { type: "ARRAY", items: { type: "OBJECT", properties: { name: {type: "STRING"}, value: {type: "STRING"} } } }
+        },
+        required: ['name', 'category']
+    }
 };
+
 export const updateOtherReportKpiFunctionDeclaration: FunctionDeclaration = {
     name: 'updateOtherReportKpi',
     description: 'Обновляет KPI.',
-    parameters: { type: "OBJECT", properties: { reportName: { type: "STRING" }, kpiName: { type: "STRING" }, newValue: { type: "STRING" } }, required: ['reportName', 'kpiName', 'newValue'] }
+    parameters: {
+        type: "OBJECT",
+        properties: { reportName: { type: "STRING" }, kpiName: { type: "STRING" }, newValue: { type: "STRING" } },
+        required: ['reportName', 'kpiName', 'newValue']
+    }
 };
+
 export const updateCommercialProposalFunctionDeclaration: FunctionDeclaration = {
     name: 'updateCommercialProposal',
     description: 'Обновляет КП.',
-    parameters: { type: "OBJECT", properties: { company: { type: "STRING" }, fieldToUpdate: { type: "STRING" }, newValue: { type: "STRING" } }, required: ['company', 'fieldToUpdate', 'newValue'] }
+    parameters: {
+        type: "OBJECT",
+        properties: { company: { type: "STRING" }, fieldToUpdate: { type: "STRING" }, newValue: { type: "STRING" } },
+        required: ['company', 'fieldToUpdate', 'newValue']
+    }
 };
 
 // --- ЧИСТКА JSON ---
@@ -39,89 +81,111 @@ export const analyzeReportImage = async (mimeType: string, base64Data: string): 
     const apiKey = import.meta.env.VITE_GOOGLE_API_KEY;
     if (!apiKey) throw new Error("API Key not found");
     const client = new GoogleGenAI({ apiKey });
+    
     const response = await client.models.generateContent({
-        model: "gemini-2.0-flash-exp", // Убрали models/
-        config: { systemInstruction: "JSON only" },
+        model: "models/gemini-2.0-flash-exp",
+        config: { systemInstruction: "JSON only output. Structure: { 'РТИ': {...}, '3D': {...} }" },
         contents: [{ role: "user", parts: [{ inlineData: { mimeType, data: base64Data } }, { text: "Extract data" }] }]
     });
     return cleanJson(response.text());
 };
+
 export const analyzeProposalsImage = async (mimeType: string, base64Data: string): Promise<any> => {
     const apiKey = import.meta.env.VITE_GOOGLE_API_KEY;
     if (!apiKey) throw new Error("API Key not found");
     const client = new GoogleGenAI({ apiKey });
+
     const response = await client.models.generateContent({
-        model: "gemini-2.0-flash-exp",
-        config: { systemInstruction: "JSON only" },
-        contents: [{ role: "user", parts: [{ inlineData: { mimeType, data: base64Data } }, { text: "Extract proposals" }] }]
+        model: "models/gemini-2.0-flash-exp",
+        config: { systemInstruction: "Extract proposals to JSON: { 'РТИ': [], '3D': [] }" },
+        contents: [{ role: "user", parts: [{ inlineData: { mimeType, data: base64Data } }, { text: "Extract list" }] }]
     });
     return JSON.parse(cleanJson(response.text()));
 };
+
 export const analyzeCampaignsImage = async (mimeType: string, base64Data: string): Promise<any[]> => {
     const apiKey = import.meta.env.VITE_GOOGLE_API_KEY;
     if (!apiKey) throw new Error("API Key not found");
     const client = new GoogleGenAI({ apiKey });
+
     const response = await client.models.generateContent({
-        model: "gemini-2.0-flash-exp",
-        config: { systemInstruction: "JSON only" },
-        contents: [{ role: "user", parts: [{ inlineData: { mimeType, data: base64Data } }, { text: "Extract campaigns" }] }]
+        model: "models/gemini-2.0-flash-exp",
+        config: { systemInstruction: "Extract campaigns to JSON array []" },
+        contents: [{ role: "user", parts: [{ inlineData: { mimeType, data: base64Data } }, { text: "Extract table" }] }]
     });
     return JSON.parse(cleanJson(response.text()));
 };
+
 export const analyzePaymentInvoice = async (mimeType: string, base64Data: string): Promise<any> => {
     const apiKey = import.meta.env.VITE_GOOGLE_API_KEY;
     if (!apiKey) throw new Error("API Key not found");
     const client = new GoogleGenAI({ apiKey });
+
     const response = await client.models.generateContent({
-        model: "gemini-2.0-flash-exp",
-        config: { systemInstruction: "JSON only" },
-        contents: [{ role: "user", parts: [{ inlineData: { mimeType, data: base64Data } }, { text: "Extract invoice data" }] }]
+        model: "models/gemini-2.0-flash-exp",
+        config: { systemInstruction: "Extract invoice to JSON: { serviceName, amount, currency, paymentPeriod, lastPaymentDate, paymentDetails, paymentMethod }" },
+        contents: [{ role: "user", parts: [{ inlineData: { mimeType, data: base64Data } }, { text: "Extract data" }] }]
     });
     return JSON.parse(cleanJson(response.text()));
 };
+
 export const analyzeDataConsistency = async (reports: any[]): Promise<string> => {
     const apiKey = import.meta.env.VITE_GOOGLE_API_KEY;
     if (!apiKey) throw new Error("API Key not found");
     const client = new GoogleGenAI({ apiKey });
+
     const response = await client.models.generateContent({
-        model: "gemini-2.0-flash-exp",
-        contents: [{ role: "user", parts: [{ text: `Analyze: ${JSON.stringify(reports.slice(-5))}` }] }]
+        model: "models/gemini-2.0-flash-exp",
+        contents: [{ role: "user", parts: [{ text: `Analyze trends (Russian): ${JSON.stringify(reports.slice(-5))}` }] }]
     });
     return response.text() || "Error";
 };
 
 // --- ГЛАВНАЯ ФУНКЦИЯ ТЕКСТОВОГО ЧАТА (ИСПРАВЛЕНА) ---
-export const getAIAssistantResponse = async (prompt: string, userData: UserData, systemInstruction: string) => {
+export const getAIAssistantResponse = async (prompt: string, userData: UserData, systemInstructionText: string) => {
     const apiKey = import.meta.env.VITE_GOOGLE_API_KEY;
     if (!apiKey) throw new Error("API Key not found");
     
     const client = new GoogleGenAI({ apiKey });
     
-    // Используем generateContent вместо chat.create для надежности
-    const response = await client.models.generateContent({
-        model: "gemini-2.0-flash-exp", // Без 'models/' для текстового SDK
-        config: {
-            systemInstruction: systemInstruction,
-            tools: [
-                { googleSearch: {} }, // ПОИСК
-                { functionDeclarations: [
-                    navigationFunctionDeclaration,
-                    createOtherReportFunctionDeclaration,
-                    updateOtherReportKpiFunctionDeclaration,
-                    createCommercialProposalFunctionDeclaration,
-                    updateCommercialProposalFunctionDeclaration
-                ]}
+    try {
+        const response = await client.models.generateContent({
+            model: "models/gemini-2.0-flash-exp", // ИСПРАВЛЕНО: Добавлен префикс models/
+            config: {
+                // Явно форматируем systemInstruction как Content Part, чтобы избежать 400 ошибки
+                systemInstruction: {
+                    parts: [{ text: systemInstructionText }]
+                },
+                tools: [
+                    { googleSearch: {} }, 
+                    { functionDeclarations: [
+                        navigationFunctionDeclaration,
+                        createOtherReportFunctionDeclaration,
+                        updateOtherReportKpiFunctionDeclaration,
+                        createCommercialProposalFunctionDeclaration,
+                        updateCommercialProposalFunctionDeclaration
+                    ]}
+                ]
+            },
+            contents: [
+                {
+                    role: "user",
+                    parts: [{ text: prompt }]
+                }
             ]
-        },
-        contents: [{ role: "user", parts: [{ text: prompt }] }]
-    });
+        });
 
-    // Безопасное извлечение function calls
-    const functionCalls = response.functionCalls();
-    
-    if (functionCalls && functionCalls.length > 0) {
-        return { text: null, functionCall: functionCalls[0] };
+        const functionCalls = response.functionCalls();
+        
+        if (functionCalls && functionCalls.length > 0) {
+            return { text: null, functionCall: functionCalls[0] };
+        }
+
+        return { text: response.text(), functionCall: null };
+        
+    } catch (error: any) {
+        console.error("Full Gemini Error:", error);
+        // Возвращаем читаемую ошибку для интерфейса
+        throw new Error(error.message || "Ошибка при запросе к AI");
     }
-
-    return { text: response.text(), functionCall: null };
 };
