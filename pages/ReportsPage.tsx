@@ -1,5 +1,3 @@
-
-
 import React, { useState, useMemo, useEffect, useCallback } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { Report } from '../types';
@@ -429,13 +427,20 @@ const CreateReportUpload: React.FC<{ onBack: () => void, onSave: (report: Omit<R
         }
 
         const reportDate = new Date(year, month - 1, 1).toISOString().split('T')[0];
-        const rtiMetrics = parsedDirections['РТИ'];
-        const d3Metrics = parsedDirections['3D'];
+        const rti = parsedDirections['РТИ'];
+        const d3 = parsedDirections['3D'];
         
-        const totalMetrics = Object.keys(rtiMetrics).reduce((acc, key) => {
-            (acc as any)[key] = (rtiMetrics as any)[key] + (d3Metrics as any)[key];
-            return acc;
-        }, {} as Report['metrics']);
+        // !!! ЯВНОЕ СУММИРОВАНИЕ ДЛЯ ТОЧНОСТИ !!!
+        // Это гарантирует, что "sales" и другие метрики корректно попадут в Общий отчет
+        const totalMetrics = {
+            budget: (rti.budget || 0) + (d3.budget || 0),
+            clicks: (rti.clicks || 0) + (d3.clicks || 0),
+            leads: (rti.leads || 0) + (d3.leads || 0),
+            proposals: (rti.proposals || 0) + (d3.proposals || 0),
+            invoices: (rti.invoices || 0) + (d3.invoices || 0),
+            deals: (rti.deals || 0) + (d3.deals || 0),
+            sales: (rti.sales || 0) + (d3.sales || 0), // Выручка суммируется здесь
+        };
 
         onSave({ name: reportName, creationDate: reportDate, metrics: totalMetrics, directions: parsedDirections });
     };
