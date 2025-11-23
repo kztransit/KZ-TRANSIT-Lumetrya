@@ -268,11 +268,13 @@ const CreateReportManual: React.FC<{ onBack: () => void, onSave: (report: Omit<R
             return;
         }
 
-        const reportDate = new Date(year, month - 1, 1);
+        // --- ИСПРАВЛЕНИЕ: ЖЕСТКАЯ ДАТА БЕЗ UTC СДВИГОВ ---
+        // Формируем строку "YYYY-MM-01" вручную, чтобы 1 число не стало 31-м прошлого месяца
+        const reportDateString = `${year}-${String(month).padStart(2, '0')}-01`;
         
         const newReport: Omit<Report, 'id'> = {
             name: reportName,
-            creationDate: reportDate.toISOString().split('T')[0],
+            creationDate: reportDateString,
             metrics: totals,
             directions: formMetrics
         };
@@ -426,12 +428,13 @@ const CreateReportUpload: React.FC<{ onBack: () => void, onSave: (report: Omit<R
             return;
         }
 
-        const reportDate = new Date(year, month - 1, 1).toISOString().split('T')[0];
+        // --- ИСПРАВЛЕНИЕ ЗДЕСЬ ТОЖЕ ---
+        const reportDateString = `${year}-${String(month).padStart(2, '0')}-01`;
+
         const rti = parsedDirections['РТИ'];
         const d3 = parsedDirections['3D'];
         
-        // !!! ЯВНОЕ СУММИРОВАНИЕ ДЛЯ ТОЧНОСТИ !!!
-        // Это гарантирует, что "sales" и другие метрики корректно попадут в Общий отчет
+        // ЯВНОЕ СУММИРОВАНИЕ
         const totalMetrics = {
             budget: (rti.budget || 0) + (d3.budget || 0),
             clicks: (rti.clicks || 0) + (d3.clicks || 0),
@@ -439,10 +442,10 @@ const CreateReportUpload: React.FC<{ onBack: () => void, onSave: (report: Omit<R
             proposals: (rti.proposals || 0) + (d3.proposals || 0),
             invoices: (rti.invoices || 0) + (d3.invoices || 0),
             deals: (rti.deals || 0) + (d3.deals || 0),
-            sales: (rti.sales || 0) + (d3.sales || 0), // Выручка суммируется здесь
+            sales: (rti.sales || 0) + (d3.sales || 0), 
         };
 
-        onSave({ name: reportName, creationDate: reportDate, metrics: totalMetrics, directions: parsedDirections });
+        onSave({ name: reportName, creationDate: reportDateString, metrics: totalMetrics, directions: parsedDirections });
     };
 
     return (
