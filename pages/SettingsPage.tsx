@@ -1,8 +1,3 @@
-
-
-
-
-
 import React, { useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { v4 as uuidv4 } from 'uuid';
@@ -15,13 +10,13 @@ interface SettingsPageProps {
 }
 
 const SettingsPage: React.FC<SettingsPageProps> = ({ fullUserData, setAllUserData, setCompanyProfile }) => {
+    // Инициализируем состояние один раз при загрузке компонента
     const [profile, setProfile] = useState<CompanyProfile>(fullUserData.companyProfile);
     const [status, setStatus] = useState<'idle' | 'saving' | 'saved'>('idle');
     const importFileInputRef = useRef<HTMLInputElement>(null);
 
-    useEffect(() => {
-        setProfile(fullUserData.companyProfile);
-    }, [fullUserData.companyProfile]);
+    // УБРАН useEffect, который перезаписывал состояние при каждом чихе родителя
+    // Это решит проблему с вводом по одной букве.
 
     const handleDetailChange = (e: React.ChangeEvent<HTMLInputElement>) => {
         const { name, value } = e.target;
@@ -77,7 +72,7 @@ const SettingsPage: React.FC<SettingsPageProps> = ({ fullUserData, setAllUserDat
 
     const handleSaveProfile = () => {
         setStatus('saving');
-        setCompanyProfile(profile);
+        setCompanyProfile(profile); // Отправляем данные в глобальный стейт только по кнопке
         setTimeout(() => {
             setStatus('saved');
             setTimeout(() => setStatus('idle'), 2000);
@@ -113,6 +108,10 @@ const SettingsPage: React.FC<SettingsPageProps> = ({ fullUserData, setAllUserDat
                 const data = JSON.parse(text);
                 if (window.confirm('Вы уверены? Импорт заменит все текущие данные в приложении.')) {
                     setAllUserData(data as UserData);
+                    // После импорта обновляем и локальный профиль
+                    if (data.companyProfile) {
+                        setProfile(data.companyProfile);
+                    }
                     alert('Импорт завершен. Данные обновлены.');
                 }
             } catch (error) {
@@ -120,14 +119,34 @@ const SettingsPage: React.FC<SettingsPageProps> = ({ fullUserData, setAllUserDat
             }
         };
         reader.readAsText(file);
+        // Сбрасываем value инпута, чтобы можно было выбрать тот же файл снова
+        event.target.value = '';
     };
 
     const DetailInput: React.FC<{name: keyof CompanyDetails, label: string}> = ({name, label}) => (
-        <div><label className="text-sm font-medium text-slate-600">{label}</label><input name={name} value={profile.details[name]} onChange={handleDetailChange} className="w-full mt-1 bg-gray-50 p-2 rounded-lg border focus:border-cyan-500"/></div>
+        <div>
+            <label className="text-sm font-medium text-slate-600">{label}</label>
+            <input 
+                name={name} 
+                value={profile.details[name] || ''} 
+                onChange={handleDetailChange} 
+                className="w-full mt-1 bg-gray-50 p-2 rounded-lg border focus:border-cyan-500"
+            />
+        </div>
     );
+    
     const ContactInput: React.FC<{name: keyof CompanyContacts, label: string}> = ({name, label}) => (
-        <div><label className="text-sm font-medium text-slate-600">{label}</label><input name={name} value={profile.contacts[name]} onChange={handleContactChange} className="w-full mt-1 bg-gray-50 p-2 rounded-lg border focus:border-cyan-500"/></div>
+        <div>
+            <label className="text-sm font-medium text-slate-600">{label}</label>
+            <input 
+                name={name} 
+                value={profile.contacts[name] || ''} 
+                onChange={handleContactChange} 
+                className="w-full mt-1 bg-gray-50 p-2 rounded-lg border focus:border-cyan-500"
+            />
+        </div>
     );
+    
     const ListInput: React.FC<{listName: 'websites' | 'socialMedia', label: string}> = ({listName, label}) => (
         <div className="space-y-2">
             <h4 className="font-semibold">{label}</h4>
@@ -142,14 +161,14 @@ const SettingsPage: React.FC<SettingsPageProps> = ({ fullUserData, setAllUserDat
     );
 
     return (
-        <div className="space-y-6">
+        <div className="space-y-6 pb-10">
             <h1 className="text-4xl font-bold text-slate-900">Настройки и профиль компании</h1>
             
             <div className="bg-white rounded-xl shadow-lg">
                 <div className="p-6 border-b flex justify-between items-center">
                     <h2 className="text-xl font-bold">Профиль компании</h2>
-                     <button onClick={handleSaveProfile} disabled={status !== 'idle'} className="bg-cyan-600 hover:bg-cyan-700 text-white font-bold py-2 px-6 rounded-lg text-sm disabled:bg-slate-400">
-                        {status === 'saving' ? 'Сохранение...' : status === 'saved' ? 'Сохранено!' : 'Сохранить профиль'}
+                     <button onClick={handleSaveProfile} disabled={status !== 'idle'} className={`text-white font-bold py-2 px-6 rounded-lg text-sm disabled:bg-slate-400 ${status === 'saved' ? 'bg-green-600' : 'bg-cyan-600 hover:bg-cyan-700'}`}>
+                        {status === 'saving' ? 'Сохранение...' : status === 'saved' ? '✓ Сохранено!' : 'Сохранить профиль'}
                     </button>
                 </div>
                 <div className="p-6 space-y-8">
