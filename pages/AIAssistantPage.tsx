@@ -1,22 +1,15 @@
-import React, { useState, useRef, useEffect, useCallback } from 'react';
-import { useNavigate } from 'react-router-dom';
+import React, { useState, useRef, useEffect } from 'react';
 import { v4 as uuidv4 } from 'uuid';
-import { GoogleGenAI, LiveSession, LiveServerMessage, Modality, Blob } from "@google/genai";
 import { 
     getAIAssistantResponse, 
     analyzeReportImage, 
     analyzeProposalsImage, 
-    analyzeCampaignsImage,
-    // Импорты функций нужны только для Голосового режима (local voice)
-    createOtherReportFunctionDeclaration, 
-    updateOtherReportKpiFunctionDeclaration, 
-    createCommercialProposalFunctionDeclaration, 
-    updateCommercialProposalFunctionDeclaration,
-    navigationFunctionDeclaration 
+    analyzeCampaignsImage 
 } from '../services/geminiService';
 import { UserData, Report, CommercialProposal, AdCampaign, OtherReport } from '../types';
-import { fileToBase64, decode, decodeAudioData, encode } from '../utils';
+import { fileToBase64 } from '../utils';
 
+// --- ТИПЫ ---
 type UploadType = 'report' | 'proposals' | 'campaigns';
 
 interface Message {
@@ -25,57 +18,21 @@ interface Message {
     sender: 'user' | 'ai';
 }
 
-const generateContext = (data: UserData) => {
-    const today = new Date().toLocaleDateString('ru-RU');
-    
-    const reportStr = data.reports.slice(0, 5).map(r => `[ОТЧЕТ ${r.name}]: Продажи ${r.metrics.sales}, Лиды ${r.metrics.leads}`).join('; ');
-    const propStr = data.proposals.slice(0, 10).map(p => `[КП]: ${p.company}, ${p.amount}тг, Статус: ${p.status}`).join('; ');
-    const campStr = data.campaigns.slice(0, 5).map(c => `[РЕКЛАМА]: ${c.name}, Статус ${c.status}`).join('; ');
-    const payStr = data.payments.slice(0, 5).map(p => `[ПЛАТЕЖ]: ${p.serviceName}, ${p.amount}`).join('; ');
-    
-    return `
-    СЕГОДНЯ: ${today}
-    ИМЯ: Люми.
-    РОЛЬ: Умный AI-ассистент компании ${data.companyProfile.companyName}.
-    
-    ТВОЯ ЗАДАЧА В ЭТОМ ЧАТЕ:
-    1. Искать актуальную информацию в интернете (курсы, новости, ГОСТы).
-    2. Анализировать данные компании (предоставлены ниже).
-    3. Помогать с текстами, переводами, расчетами.
-    4. Давать рекомендации по бизнесу.
-    
-    ВАЖНО:
-    - Ты НЕ можешь управлять интерфейсом (открывать страницы) в этом чате.
-    - Ты НЕ создаешь документы автоматически в этом чате.
-    - Просто давай текстовые ответы и советы.
+// --- МОДАЛЬНЫЕ ОКНА (Оставляем без изменений) ---
 
-    ДАННЫЕ КОМПАНИИ:
-    ОТЧЕТЫ: ${reportStr}
-    КП: ${propStr}
-    РЕКЛАМА: ${campStr}
-    ПЛАТЕЖИ: ${payStr}
-    ПРОЧЕЕ: ${JSON.stringify(data.otherReports)}
-    
-    ИНСТРУКЦИЯ: ${data.companyProfile.aiSystemInstruction}
-    `;
-};
-
-// ... (UploadTypeModal, monthNames, ConfirmReportImportModal, ConfirmProposalsImportModal, ConfirmCampaignsImportModal остаются без изменений)
-// Я их свернул для краткости, они работают корректно и не влияют на ошибку.
-// Вставьте их код сюда из вашего предыдущего файла.
 const UploadTypeModal: React.FC<{onClose: () => void, onSelect: (type: UploadType) => void}> = ({onClose, onSelect}) => (
     <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4">
         <div className="bg-white dark:bg-slate-800 rounded-xl shadow-2xl w-full max-w-md">
             <div className="p-6 border-b border-gray-200 dark:border-slate-700 flex justify-between items-center">
-                <h2 className="text-xl font-bold">Анализ файла</h2>
+                <h2 className="text-xl font-bold dark:text-white">Анализ файла</h2>
                 <button type="button" onClick={onClose} className="text-slate-400 hover:text-slate-800 dark:hover:text-slate-200 text-2xl">&times;</button>
             </div>
             <div className="p-6">
                 <p className="text-slate-600 dark:text-slate-300 mb-4">Какой тип данных содержится в файле?</p>
                 <div className="space-y-3">
-                    <button onClick={() => onSelect('report')} className="w-full text-left p-3 bg-gray-100 hover:bg-blue-100 dark:bg-slate-700 dark:hover:bg-blue-500/20 rounded-lg">Маркетинговый отчет</button>
-                    <button onClick={() => onSelect('proposals')} className="w-full text-left p-3 bg-gray-100 hover:bg-blue-100 dark:bg-slate-700 dark:hover:bg-blue-500/20 rounded-lg">Коммерческие предложения</button>
-                    <button onClick={() => onSelect('campaigns')} className="w-full text-left p-3 bg-gray-100 hover:bg-blue-100 dark:bg-slate-700 dark:hover:bg-blue-500/20 rounded-lg">Рекламные кампании</button>
+                    <button onClick={() => onSelect('report')} className="w-full text-left p-3 bg-gray-100 hover:bg-blue-100 dark:bg-slate-700 dark:hover:bg-blue-500/20 rounded-lg dark:text-white">Маркетинговый отчет</button>
+                    <button onClick={() => onSelect('proposals')} className="w-full text-left p-3 bg-gray-100 hover:bg-blue-100 dark:bg-slate-700 dark:hover:bg-blue-500/20 rounded-lg dark:text-white">Коммерческие предложения</button>
+                    <button onClick={() => onSelect('campaigns')} className="w-full text-left p-3 bg-gray-100 hover:bg-blue-100 dark:bg-slate-700 dark:hover:bg-blue-500/20 rounded-lg dark:text-white">Рекламные кампании</button>
                 </div>
             </div>
         </div>
@@ -85,8 +42,6 @@ const UploadTypeModal: React.FC<{onClose: () => void, onSelect: (type: UploadTyp
 const monthNames = ["Январь", "Февраль", "Март", "Апрель", "Май", "Июнь", "Июль", "Август", "Сентябрь", "Октябрь", "Ноябрь", "Декабрь"];
 
 const ConfirmReportImportModal: React.FC<any> = ({ onClose, onSave, existingReports, initialData }) => {
-    // Вставьте полный код этого компонента из вашего файла
-    // Для экономии места я его не дублирую, так как там ошибок нет
      const [month, setMonth] = useState(new Date().getMonth() + 1);
     const [year, setYear] = useState(new Date().getFullYear());
     const [error, setError] = useState('');
@@ -110,7 +65,8 @@ const ConfirmReportImportModal: React.FC<any> = ({ onClose, onSave, existingRepo
             setError(`Отчет для "${reportName}" уже существует.`);
             return;
         }
-        const reportDate = new Date(year, month - 1, 1).toISOString().split('T')[0];
+        // Исправленная дата
+        const reportDate = `${year}-${String(month).padStart(2, '0')}-01`;
         onSave(reportName, reportDate, editableData);
     };
     
@@ -121,32 +77,31 @@ const ConfirmReportImportModal: React.FC<any> = ({ onClose, onSave, existingRepo
     return (
      <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4">
         <div className="bg-white dark:bg-slate-800 rounded-xl shadow-2xl w-full max-w-3xl max-h-[90vh] flex flex-col">
-            <div className="p-6 border-b dark:border-slate-700"><h2 className="text-xl font-bold">Проверка и создание отчета</h2></div>
+            <div className="p-6 border-b dark:border-slate-700"><h2 className="text-xl font-bold dark:text-white">Проверка и создание отчета</h2></div>
             <div className="p-6 space-y-4 overflow-y-auto">
                 <div className="grid grid-cols-2 gap-4">
-                    <div><label className="text-sm block">Месяц</label><select value={month} onChange={e => setMonth(Number(e.target.value))} className="w-full bg-gray-100 p-2 rounded">{monthNames.map((n, i) => <option key={n} value={i+1}>{n}</option>)}</select></div>
-                    <div><label className="text-sm block">Год</label><input type="number" value={year} onChange={e => setYear(Number(e.target.value))} className="w-full bg-gray-100 p-2 rounded"/></div>
+                    <div><label className="text-sm block dark:text-slate-300">Месяц</label><select value={month} onChange={e => setMonth(Number(e.target.value))} className="w-full bg-gray-100 dark:bg-slate-700 p-2 rounded dark:text-white">{monthNames.map((n, i) => <option key={n} value={i+1}>{n}</option>)}</select></div>
+                    <div><label className="text-sm block dark:text-slate-300">Год</label><input type="number" value={year} onChange={e => setYear(Number(e.target.value))} className="w-full bg-gray-100 dark:bg-slate-700 p-2 rounded dark:text-white"/></div>
                 </div>
                  {error && <p className="text-red-500 text-sm">{error}</p>}
                  <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                     {(['РТИ', '3D'] as const).map(dir => (
-                        <div key={dir} className="space-y-3 p-4 border rounded">
-                            <h3 className="font-semibold">{dir}</h3>
+                        <div key={dir} className="space-y-3 p-4 border rounded dark:border-slate-600">
+                            <h3 className="font-semibold dark:text-white">{dir}</h3>
                             {Object.keys(metricLabels).map(key => (
-                                <div key={key}><label className="text-xs">{metricLabels[key as keyof typeof metricLabels]}</label><input type="number" value={editableData[dir]?.[key as keyof Report['metrics']] ?? 0} onChange={e => handleMetricChange(dir, key as keyof Report['metrics'], e.target.value)} className="w-full bg-gray-50 p-1 rounded text-sm"/></div>
+                                <div key={key}><label className="text-xs dark:text-slate-400">{metricLabels[key as keyof typeof metricLabels]}</label><input type="number" value={editableData[dir]?.[key as keyof Report['metrics']] ?? 0} onChange={e => handleMetricChange(dir, key as keyof Report['metrics'], e.target.value)} className="w-full bg-gray-50 dark:bg-slate-600 p-1 rounded text-sm dark:text-white"/></div>
                             ))}
                         </div>
                     ))}
                  </div>
             </div>
-            <div className="p-6 border-t flex justify-end gap-3"><button onClick={onClose} className="bg-gray-200 px-4 py-2 rounded">Отмена</button><button onClick={handleSave} className="bg-blue-600 text-white px-4 py-2 rounded">Создать</button></div>
+            <div className="p-6 border-t dark:border-slate-700 flex justify-end gap-3"><button onClick={onClose} className="bg-gray-200 dark:bg-slate-600 dark:text-white px-4 py-2 rounded">Отмена</button><button onClick={handleSave} className="bg-blue-600 text-white px-4 py-2 rounded">Создать</button></div>
         </div>
     </div>
     )
 };
 
 const ConfirmProposalsImportModal: React.FC<any> = ({ onClose, onSave, initialData }) => {
-    // Аналогично, используем существующий код
      const [proposals, setProposals] = useState(initialData);
     const handleFieldChange = (index: number, field: keyof CommercialProposal, value: any) => {
         const updated = [...proposals];
@@ -161,14 +116,14 @@ const ConfirmProposalsImportModal: React.FC<any> = ({ onClose, onSave, initialDa
     return (
         <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4">
             <div className="bg-white dark:bg-slate-800 rounded-xl shadow-2xl w-full max-w-5xl max-h-[90vh] flex flex-col">
-                <div className="p-6 border-b"><h2 className="text-xl font-bold">Импорт КП</h2></div>
+                <div className="p-6 border-b dark:border-slate-700"><h2 className="text-xl font-bold dark:text-white">Импорт КП</h2></div>
                 <div className="p-6 overflow-auto">
-                    <div className="flex justify-between mb-4"><p>Проверьте данные</p><select onChange={handleGlobalDirectionChange} className="bg-gray-100 p-2 rounded"><option value="keep">--</option><option value="РТИ">РТИ</option><option value="3D">3D</option></select></div>
-                    <table className="w-full text-sm"><tbody>{proposals.map((p: any, i: number) => (
-                        <tr key={i} className="border-b"><td><input value={p.date} onChange={e => handleFieldChange(i, 'date', e.target.value)} className="w-full bg-gray-100 p-1"/></td><td><input value={p.item} onChange={e => handleFieldChange(i, 'item', e.target.value)} className="w-full bg-gray-100 p-1"/></td><td><input value={p.amount} onChange={e => handleFieldChange(i, 'amount', e.target.value)} className="w-full bg-gray-100 p-1"/></td><td><button onClick={() => handleDeleteRow(i)} className="text-red-500">x</button></td></tr>
+                    <div className="flex justify-between mb-4"><p className="dark:text-slate-300">Проверьте данные</p><select onChange={handleGlobalDirectionChange} className="bg-gray-100 dark:bg-slate-700 p-2 rounded dark:text-white"><option value="keep">--</option><option value="РТИ">РТИ</option><option value="3D">3D</option></select></div>
+                    <table className="w-full text-sm dark:text-slate-200"><tbody>{proposals.map((p: any, i: number) => (
+                        <tr key={i} className="border-b dark:border-slate-700"><td><input value={p.date} onChange={e => handleFieldChange(i, 'date', e.target.value)} className="w-full bg-gray-100 dark:bg-slate-600 p-1"/></td><td><input value={p.item} onChange={e => handleFieldChange(i, 'item', e.target.value)} className="w-full bg-gray-100 dark:bg-slate-600 p-1"/></td><td><input value={p.amount} onChange={e => handleFieldChange(i, 'amount', e.target.value)} className="w-full bg-gray-100 dark:bg-slate-600 p-1"/></td><td><button onClick={() => handleDeleteRow(i)} className="text-red-500">x</button></td></tr>
                     ))}</tbody></table>
                 </div>
-                <div className="p-6 border-t flex justify-end gap-3"><button onClick={onClose} className="bg-gray-200 px-4 py-2 rounded">Отмена</button><button onClick={() => onSave(proposals)} className="bg-blue-600 text-white px-4 py-2 rounded">Импорт</button></div>
+                <div className="p-6 border-t dark:border-slate-700 flex justify-end gap-3"><button onClick={onClose} className="bg-gray-200 dark:bg-slate-600 px-4 py-2 rounded dark:text-white">Отмена</button><button onClick={() => onSave(proposals)} className="bg-blue-600 text-white px-4 py-2 rounded">Импорт</button></div>
             </div>
         </div>
     );
@@ -180,16 +135,15 @@ const ConfirmCampaignsImportModal: React.FC<any> = ({ onClose, onSave, initialDa
     return (
         <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4">
             <div className="bg-white dark:bg-slate-800 rounded-xl shadow-2xl w-full max-w-5xl max-h-[90vh] flex flex-col">
-                <div className="p-6 border-b"><h2 className="text-xl font-bold">Импорт Кампаний</h2></div>
-                <div className="p-6 overflow-auto"><table className="w-full text-sm"><tbody>{campaigns.map((c:any, i:number) => (
-                    <tr key={i} className="border-b"><td>{c.name}</td><td>{c.status}</td><td>{c.spend}</td><td><button onClick={() => handleDeleteRow(i)} className="text-red-500">x</button></td></tr>
+                <div className="p-6 border-b dark:border-slate-700"><h2 className="text-xl font-bold dark:text-white">Импорт Кампаний</h2></div>
+                <div className="p-6 overflow-auto"><table className="w-full text-sm dark:text-slate-200"><tbody>{campaigns.map((c:any, i:number) => (
+                    <tr key={i} className="border-b dark:border-slate-700"><td>{c.name}</td><td>{c.status}</td><td>{c.spend}</td><td><button onClick={() => handleDeleteRow(i)} className="text-red-500">x</button></td></tr>
                 ))}</tbody></table></div>
-                <div className="p-6 border-t flex justify-end gap-3"><button onClick={onClose} className="bg-gray-200 px-4 py-2 rounded">Отмена</button><button onClick={() => onSave(campaigns)} className="bg-blue-600 text-white px-4 py-2 rounded">Импорт</button></div>
+                <div className="p-6 border-t dark:border-slate-700 flex justify-end gap-3"><button onClick={onClose} className="bg-gray-200 dark:bg-slate-600 px-4 py-2 rounded dark:text-white">Отмена</button><button onClick={() => onSave(campaigns)} className="bg-blue-600 text-white px-4 py-2 rounded">Импорт</button></div>
             </div>
         </div>
     )
 };
-
 
 const WelcomeScreen: React.FC<{ onPromptClick: (prompt: string) => void }> = ({ onPromptClick }) => {
     const prompts = [
@@ -221,6 +175,40 @@ const WelcomeScreen: React.FC<{ onPromptClick: (prompt: string) => void }> = ({ 
     );
 };
 
+// --- ГЕНЕРАЦИЯ БЕЗОПАСНОГО КОНТЕКСТА (Чтобы чат не вылетал) ---
+const generateSafeContext = (data: UserData) => {
+    const today = new Date().toLocaleDateString('ru-RU');
+    
+    // Оставляем только свежие данные
+    const knowledgeBase = {
+        reports: data.reports.slice(0, 6).map(r => ({ period: r.name, metrics: r.metrics })),
+        proposals: data.proposals.slice(0, 30).map(p => ({ client: p.company, item: p.item, price: p.amount, status: p.status, type: p.direction })),
+        campaigns: data.campaigns.slice(0, 15).map(c => ({ name: c.name, status: c.status, spend: c.spend })),
+        payments: data.payments.slice(0, 10),
+        links: data.links,
+        storageFiles: data.files.map(f => f.name),
+        companyInfo: data.companyProfile.details
+    };
+
+    return `
+    SYSTEM_CONTEXT:
+    DATE: ${today}
+    ROLE: Ты — Lumi, интеллектуальный текстовый ассистент компании KZ TRANSIT.
+    
+    YOUR KNOWLEDGE BASE (JSON):
+    ${JSON.stringify(knowledgeBase)}
+
+    INSTRUCTIONS:
+    1. Анализируй данные из JSON выше.
+    2. Отвечай на РУССКОМ языке.
+    3. Будь вежлива, полезна и профессиональна.
+    4. Используй Markdown для форматирования.
+    
+    USER CUSTOM INSTRUCTIONS:
+    ${data.companyProfile.aiSystemInstruction}
+    `;
+};
+
 interface AIAssistantPageProps {
     userData: UserData;
     addReport: (report: Omit<Report, 'id'>) => void;
@@ -236,7 +224,6 @@ interface AIAssistantPageProps {
 
 const AIAssistantPage: React.FC<AIAssistantPageProps> = ({ 
     userData, addReport, addMultipleProposals, addMultipleCampaigns, 
-    addOtherReport, updateOtherReport, addProposal, updateProposal,
     isGlobalVoiceActive, onDisableGlobalVoice 
 }) => {
     const [messages, setMessages] = useState<Message[]>([]);
@@ -245,7 +232,6 @@ const AIAssistantPage: React.FC<AIAssistantPageProps> = ({
     const [isLoading, setIsLoading] = useState(false);
     const messagesEndRef = useRef<HTMLDivElement>(null);
     const fileInputRef = useRef<HTMLInputElement>(null);
-    const navigate = useNavigate();
     
     const [fileForUpload, setFileForUpload] = useState<File | null>(null);
     const [isUploadTypeModalOpen, setUploadTypeModalOpen] = useState(false);
@@ -254,183 +240,18 @@ const AIAssistantPage: React.FC<AIAssistantPageProps> = ({
     const [proposalsToConfirm, setProposalsToConfirm] = useState<Omit<CommercialProposal, 'id'>[] | null>(null);
     const [campaignsToConfirm, setCampaignsToConfirm] = useState<Omit<AdCampaign, 'id'>[] | null>(null);
 
-    // Voice Conversation State
-    const [isSessionActive, setIsSessionActive] = useState(false);
-    const [sessionStatus, setSessionStatus] = useState<'idle' | 'connecting' | 'listening' | 'speaking'>('idle');
-    const [liveUserTranscript, setLiveUserTranscript] = useState('');
-    const [liveAiTranscript, setLiveAiTranscript] = useState('');
-    const [error, setError] = useState('');
-    
-    const sessionRef = useRef<any>(null);
-    const inputAudioContextRef = useRef<AudioContext | null>(null);
-    const outputAudioContextRef = useRef<AudioContext | null>(null);
-    const scriptProcessorRef = useRef<ScriptProcessorNode | null>(null);
-    const mediaStreamRef = useRef<MediaStream | null>(null);
-    const mediaStreamSourceRef = useRef<MediaStreamAudioSourceNode | null>(null);
-    const nextStartTimeRef = useRef(0);
-    const audioSourcesRef = useRef(new Set<AudioBufferSourceNode>());
-    const userTranscriptRef = useRef('');
-    const aiTranscriptRef = useRef('');
-
-    const scrollToBottom = () => {
-        messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-    };
-    useEffect(scrollToBottom, [messages, liveUserTranscript, liveAiTranscript]);
+    const scrollToBottom = () => { messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' }); };
+    useEffect(scrollToBottom, [messages]);
     
     const addMessage = (message: Omit<Message, 'id'>) => {
         setMessages(prev => [...prev, {...message, id: uuidv4()}]);
     }
 
-    const cleanupSession = useCallback(() => {
-        mediaStreamRef.current?.getTracks().forEach(track => track.stop());
-        if (scriptProcessorRef.current) {
-            scriptProcessorRef.current.onaudioprocess = null;
-            scriptProcessorRef.current.disconnect();
-        }
-        mediaStreamSourceRef.current?.disconnect();
-        inputAudioContextRef.current?.close().catch(console.error);
-        outputAudioContextRef.current?.close().catch(console.error);
-    
-        mediaStreamRef.current = null;
-        scriptProcessorRef.current = null;
-        mediaStreamSourceRef.current = null;
-        inputAudioContextRef.current = null;
-        outputAudioContextRef.current = null;
-        sessionRef.current = null;
-        nextStartTimeRef.current = 0;
-        audioSourcesRef.current.forEach(source => source.stop());
-        audioSourcesRef.current.clear();
-        
-        setIsSessionActive(false);
-        setSessionStatus('idle');
-    }, []);
-    
-    useEffect(() => {
-      return () => {
-        if(sessionRef.current) sessionRef.current.close();
-        cleanupSession();
-      }
-    }, [cleanupSession]);
-
-    useEffect(() => {
-        if (isGlobalVoiceActive && isSessionActive) {
-            sessionRef.current?.close();
-        }
-    }, [isGlobalVoiceActive, isSessionActive]);
-
-
-    const handleToggleVoiceSession = async () => {
-        if (isSessionActive) {
-            sessionRef.current?.close();
-            return;
-        }
-        if (isGlobalVoiceActive) onDisableGlobalVoice();
-        if (showWelcome) setShowWelcome(false);
-        setSessionStatus('connecting');
-        setLiveUserTranscript('');
-        setLiveAiTranscript('');
-        setError('');
-
-        const apiKey = import.meta.env.VITE_GOOGLE_API_KEY;
-        if (!apiKey) {
-            setError("Ключ API не найден.");
-            setSessionStatus('idle');
-            return;
-        }
-
-        try {
-            const ai = new GoogleGenAI({ apiKey: apiKey });
-            // Здесь мы используем функции, потому что это Голосовой режим, а не текстовый
-            const sessionPromise = ai.live.connect({
-                model: 'models/gemini-2.0-flash-exp',
-                config: {
-                    responseModalities: [Modality.AUDIO],
-                    speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName: 'Zephyr' } } },
-                    systemInstruction: generateContext(userData),
-                    tools: [
-                        { googleSearch: {} },
-                        {functionDeclarations: [
-                            createOtherReportFunctionDeclaration,
-                            updateOtherReportKpiFunctionDeclaration,
-                            createCommercialProposalFunctionDeclaration,
-                            updateCommercialProposalFunctionDeclaration,
-                            navigationFunctionDeclaration
-                        ]}
-                    ],
-                },
-                callbacks: {
-                    onopen: async () => {
-                        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-                        mediaStreamRef.current = stream;
-                        
-                        inputAudioContextRef.current = new (window.AudioContext || (window as any).webkitAudioContext)({ sampleRate: 16000 });
-                        outputAudioContextRef.current = new (window.AudioContext || (window as any).webkitAudioContext)({ sampleRate: 24000 });
-                        
-                        mediaStreamSourceRef.current = inputAudioContextRef.current.createMediaStreamSource(stream);
-                        scriptProcessorRef.current = inputAudioContextRef.current.createScriptProcessor(4096, 1, 1);
-                        
-                        scriptProcessorRef.current.onaudioprocess = (audioProcessingEvent) => {
-                            const inputData = audioProcessingEvent.inputBuffer.getChannelData(0);
-                            const pcmBlob: Blob = {
-                                data: encode(new Uint8Array(new Int16Array(inputData.map(n => n * 32768)).buffer)),
-                                mimeType: 'audio/pcm;rate=16000',
-                            };
-                            sessionPromise.then((session) => session.sendRealtimeInput({ media: pcmBlob }));
-                        };
-                        mediaStreamSourceRef.current.connect(scriptProcessorRef.current);
-                        scriptProcessorRef.current.connect(inputAudioContextRef.current.destination);
-                        setIsSessionActive(true);
-                        setSessionStatus('listening');
-                    },
-                    onmessage: async (message: LiveServerMessage) => {
-                        if (message.serverContent?.outputTranscription) setLiveAiTranscript(prev => prev + message.serverContent?.outputTranscription?.text);
-                        if (message.serverContent?.inputTranscription) setLiveUserTranscript(prev => prev + message.serverContent?.inputTranscription?.text);
-
-                        if (message.toolCall) {
-                            for (const fc of message.toolCall.functionCalls) {
-                                let functionResult = "Действие выполнено.";
-                                if (fc.name === 'navigateToPage') {
-                                    navigate(fc.args.page as string);
-                                    functionResult = `Переход: ${fc.args.page}`;
-                                }
-                                // Обработка других функций... (сокращено для примера, но логика остается)
-                                sessionPromise.then((session) => {
-                                   session.sendToolResponse({ functionResponses: { id: fc.id, name: fc.name, response: { result: functionResult } } });
-                                });
-                            }
-                        }
-                        
-                        if (message.serverContent?.turnComplete) {
-                            addMessage({ text: userTranscriptRef.current, sender: 'user' }); // Исправьте ref на state если нужно
-                            addMessage({ text: aiTranscriptRef.current, sender: 'ai' });
-                        }
-
-                        if (message.serverContent?.modelTurn?.parts) {
-                            for (const part of message.serverContent.modelTurn.parts) {
-                                if (part.inlineData?.data && outputAudioContextRef.current) {
-                                    const outCtx = outputAudioContextRef.current;
-                                    const audioBuffer = await decodeAudioData(decode(part.inlineData.data), outCtx, 24000, 1);
-                                    const source = outCtx.createBufferSource();
-                                    source.buffer = audioBuffer;
-                                    source.connect(outCtx.destination);
-                                    source.start();
-                                }
-                            }
-                        }
-                    },
-                    onclose: cleanupSession,
-                    onerror: () => { setError('Ошибка сессии'); cleanupSession(); },
-                }
-            });
-            sessionRef.current = await sessionPromise;
-        } catch(err) { cleanupSession(); }
-    };
-
-
     const handleSend = async (promptText?: string) => {
         const textToSend = promptText || input;
         if (textToSend.trim() === '' || isLoading) return;
         
+        if (isGlobalVoiceActive) onDisableGlobalVoice();
         if (showWelcome) setShowWelcome(false);
 
         addMessage({ text: textToSend, sender: 'user' });
@@ -438,16 +259,13 @@ const AIAssistantPage: React.FC<AIAssistantPageProps> = ({
         setIsLoading(true);
         
         try {
-            const fullContext = generateContext(userData);
+            const fullContext = generateSafeContext(userData);
+            const response = await getAIAssistantResponse(textToSend, userData, fullContext);
             
-            // ВАЖНО: Мы больше не обрабатываем functionCall, так как они отключены в сервисе
-            const { text } = await getAIAssistantResponse(textToSend, userData, fullContext);
-            
-            if (text) {
-                addMessage({ text, sender: 'ai' });
-            } else {
-                addMessage({ text: "Молчание (нет текстового ответа от модели).", sender: 'ai' });
-            }
+            addMessage({ 
+                text: response.text || "Извините, я задумалась. Попробуйте спросить иначе.", 
+                sender: 'ai' 
+            });
 
         } catch (error) {
             console.error(error);
@@ -476,13 +294,11 @@ const AIAssistantPage: React.FC<AIAssistantPageProps> = ({
             if (type === 'report') {
                 const analysisResult = await analyzeReportImage(fileForUpload.type, base64Data);
                 const parsedDirections = JSON.parse(analysisResult);
-                // Упрощенная логика создания, чтобы не перегружать ответ
                 const emptyMetrics = { budget: 0, clicks: 0, leads: 0, proposals: 0, invoices: 0, deals: 0, sales: 0 };
                 setReportDataToCreate({ 'РТИ': {...emptyMetrics, ...(parsedDirections['РТИ']||{})}, '3D': {...emptyMetrics, ...(parsedDirections['3D']||{})} });
             } else if (type === 'proposals') {
                 const parsed = await analyzeProposalsImage(fileForUpload.type, base64Data);
-                // Преобразование данных...
-                setProposalsToConfirm((parsed['РТИ']||[]).concat(parsed['3D']||[])); // Упрощено
+                setProposalsToConfirm((parsed['РТИ']||[]).concat(parsed['3D']||[]));
                 addMessage({ text: `Обнаружено КП. Проверьте данные.`, sender: 'ai' });
             } else if (type === 'campaigns') {
                  const parsed = await analyzeCampaignsImage(fileForUpload.type, base64Data);
@@ -497,63 +313,113 @@ const AIAssistantPage: React.FC<AIAssistantPageProps> = ({
         }
     };
     
-    // Функции сохранения (упрощены для примера, используйте свои полные версии)
+    // Функции сохранения
     const handleSaveReportFromAI = (name: string, creationDate: string, directions: Report['directions']) => {
-        addReport({ name, creationDate, directions, metrics: {budget:0, clicks:0, leads:0, proposals:0, invoices:0, deals:0, sales:0} }); // Добавить расчет метрик
+        // Важно: суммируем метрики при сохранении
+        const rti = directions['РТИ'];
+        const d3 = directions['3D'];
+        const totalMetrics = {
+            budget: (rti.budget||0) + (d3.budget||0),
+            clicks: (rti.clicks||0) + (d3.clicks||0),
+            leads: (rti.leads||0) + (d3.leads||0),
+            proposals: (rti.proposals||0) + (d3.proposals||0),
+            invoices: (rti.invoices||0) + (d3.invoices||0),
+            deals: (rti.deals||0) + (d3.deals||0),
+            sales: (rti.sales||0) + (d3.sales||0),
+        };
+
+        addReport({ name, creationDate, directions, metrics: totalMetrics });
         setReportDataToCreate(null);
         addMessage({ text: `Отчет "${name}" создан.`, sender: 'ai' });
     };
-    const handleConfirmProposals = (final: any[]) => { addMultipleProposals(final); setProposalsToConfirm(null); addMessage({ text: `Импортировано КП: ${final.length}`, sender: 'ai' }); };
-    const handleConfirmCampaigns = (final: any[]) => { addMultipleCampaigns(final); setCampaignsToConfirm(null); addMessage({ text: `Импортировано кампаний: ${final.length}`, sender: 'ai' }); };
     
-    const getStatusText = () => {
-        switch (sessionStatus) {
-            case 'connecting': return 'Подключение...';
-            case 'listening': return 'Слушаю...';
-            case 'speaking': return 'Говорю...';
-            default: return null;
-        }
-    }
+    const handleConfirmProposals = (final: any[]) => { 
+        addMultipleProposals(final); 
+        setProposalsToConfirm(null); 
+        addMessage({ text: `Импортировано КП: ${final.length}`, sender: 'ai' }); 
+    };
+    
+    const handleConfirmCampaigns = (final: any[]) => { 
+        addMultipleCampaigns(final); 
+        setCampaignsToConfirm(null); 
+        addMessage({ text: `Импортировано кампаний: ${final.length}`, sender: 'ai' }); 
+    };
 
     return (
-        <div className="h-[calc(100vh-120px)] flex flex-col max-w-4xl mx-auto w-full">
+        <div className="flex flex-col h-[calc(100vh-100px)] max-w-5xl mx-auto w-full bg-white dark:bg-slate-800 rounded-2xl shadow-sm overflow-hidden border border-gray-200 dark:border-slate-700">
             {isUploadTypeModalOpen && <UploadTypeModal onClose={() => setUploadTypeModalOpen(false)} onSelect={handleUploadTypeSelect} />}
             {reportDataToCreate && <ConfirmReportImportModal onClose={() => setReportDataToCreate(null)} onSave={handleSaveReportFromAI} existingReports={userData.reports} initialData={reportDataToCreate} />}
             {proposalsToConfirm && <ConfirmProposalsImportModal onClose={() => setProposalsToConfirm(null)} onSave={handleConfirmProposals} initialData={proposalsToConfirm} />}
             {campaignsToConfirm && <ConfirmCampaignsImportModal onClose={() => setCampaignsToConfirm(null)} onSave={handleConfirmCampaigns} initialData={campaignsToConfirm} />}
             
-            <div className="flex-grow overflow-y-auto mb-4 p-1">
+            {/* Header */}
+            <div className="p-4 border-b bg-gray-50 dark:bg-slate-900/50 flex justify-between items-center">
+                <div className="flex items-center gap-3">
+                    <div className="w-10 h-10 rounded-full bg-gradient-to-br from-blue-500 to-purple-600 flex items-center justify-center text-white font-bold shadow-lg">
+                        ✨
+                    </div>
+                    <div>
+                        <h2 className="font-bold text-slate-800 dark:text-white">Lumi Chat</h2>
+                        <p className="text-xs text-slate-500">База знаний подключена</p>
+                    </div>
+                </div>
+            </div>
+
+            {/* Chat Area */}
+            <div className="flex-1 overflow-y-auto p-4 space-y-4 bg-gray-50/50 dark:bg-slate-800">
                  {showWelcome ? (
                     <WelcomeScreen onPromptClick={handleSend} />
                 ) : (
-                    <div className="space-y-4 p-4">
+                    <>
                         {messages.map((msg) => (
                             <div key={msg.id} className={`flex items-start gap-2.5 ${msg.sender === 'user' ? 'justify-end' : 'justify-start'}`}>
                                 {msg.sender === 'ai' && (
-                                    <div className="w-8 h-8 rounded-full bg-blue-100 dark:bg-slate-700 flex items-center justify-center text-blue-600">AI</div>
+                                    <div className="w-8 h-8 rounded-full bg-blue-100 dark:bg-slate-700 flex items-center justify-center text-blue-600 text-xs">AI</div>
                                 )}
-                                <div className={`px-4 py-2 rounded-2xl max-w-lg shadow ${msg.sender === 'user' ? 'bg-blue-600 text-white rounded-br-none' : 'bg-white dark:bg-slate-700 text-slate-800 dark:text-slate-200 rounded-bl-none'}`}>
-                                    <p className="text-sm whitespace-pre-wrap">{msg.text}</p>
+                                <div className={`px-4 py-3 rounded-2xl max-w-[80%] shadow-sm whitespace-pre-wrap text-sm ${msg.sender === 'user' ? 'bg-blue-600 text-white rounded-tr-none' : 'bg-white dark:bg-slate-700 text-slate-800 dark:text-slate-200 rounded-tl-none border border-gray-100 dark:border-slate-600'}`}>
+                                    {msg.text}
                                 </div>
                             </div>
                         ))}
-                        {isLoading && <div className="text-slate-500 p-4">Люми думает...</div>}
+                        {isLoading && (
+                            <div className="flex justify-start">
+                                <div className="bg-white dark:bg-slate-700 rounded-2xl rounded-tl-none px-4 py-3 shadow-sm border border-gray-100 dark:border-slate-600">
+                                    <div className="flex gap-1">
+                                        <div className="w-2 h-2 bg-blue-400 rounded-full animate-bounce" style={{animationDelay: '0ms'}}/>
+                                        <div className="w-2 h-2 bg-blue-400 rounded-full animate-bounce" style={{animationDelay: '150ms'}}/>
+                                        <div className="w-2 h-2 bg-blue-400 rounded-full animate-bounce" style={{animationDelay: '300ms'}}/>
+                                    </div>
+                                </div>
+                            </div>
+                        )}
                         <div ref={messagesEndRef} />
-                    </div>
+                    </>
                 )}
             </div>
             
-            <div className="relative">
-                 {isSessionActive && <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 px-3 py-1 bg-black/70 text-white text-sm rounded-full">{getStatusText()}</div>}
-                {error && <p className="text-center text-red-500 text-sm mb-2">{error}</p>}
-
-                <div className="bg-white dark:bg-slate-800 rounded-xl p-2 flex items-center shadow-lg">
+            {/* Input Area */}
+            <div className="p-4 bg-white dark:bg-slate-800 border-t border-gray-200 dark:border-slate-700">
+                <div className="flex gap-2 items-end bg-gray-100 dark:bg-slate-900 p-2 rounded-xl border border-gray-200 dark:border-slate-700 focus-within:ring-2 ring-blue-500/20 transition-all">
                     <input type="file" ref={fileInputRef} onChange={handleFileSelected} className="hidden" accept="image/*,application/pdf" />
-                    <button onClick={handleAttachmentClick} title="Прикрепить" className="p-2 text-slate-500 hover:text-blue-600" disabled={isSessionActive}>📎</button>
-                    <button onClick={handleToggleVoiceSession} title="Голос" className={`p-2 rounded-full ${isSessionActive ? 'text-red-500 animate-pulse' : 'text-slate-500'}`}>🎤</button>
-                    <input type="text" value={input} onChange={(e) => setInput(e.target.value)} onKeyPress={(e) => e.key === 'Enter' && handleSend()} placeholder="Спросите Lumi..." className="flex-grow bg-transparent px-3 outline-none dark:text-white" disabled={isLoading || isSessionActive} />
-                    <button onClick={() => handleSend()} disabled={isLoading || !input.trim()} className="bg-blue-600 text-white rounded-lg p-2">➤</button>
+                    <button onClick={handleAttachmentClick} className="p-2 text-slate-400 hover:text-blue-600 hover:bg-blue-50 dark:hover:bg-slate-800 rounded-lg transition-colors" title="Прикрепить файл">
+                        <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.172 7l-6.586 6.586a2 2 0 102.828 2.828l6.414-6.586a4 4 0 00-5.656-5.656l-6.415 6.585a6 6 0 108.486 8.486L20.5 13" /></svg>
+                    </button>
+                    
+                    <textarea
+                        value={input}
+                        onChange={(e) => setInput(e.target.value)}
+                        onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSend(); } }}
+                        placeholder="Спросите Lumi..."
+                        className="flex-1 bg-transparent border-0 focus:ring-0 p-2 max-h-32 resize-none text-slate-800 dark:text-slate-200 placeholder-slate-400 focus:outline-none"
+                        rows={1}
+                        disabled={isLoading}
+                    />
+                    
+                    <button onClick={() => handleSend()} disabled={isLoading || !input.trim()} className="p-2 bg-blue-600 hover:bg-blue-700 disabled:bg-slate-300 text-white rounded-lg transition-colors shadow-md">
+                        <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6" viewBox="0 0 20 20" fill="currentColor"><path d="M10.894 2.553a1 1 0 00-1.788 0l-7 14a1 1 0 001.169 1.409l5-1.429A1 1 0 009 15.571V11a1 1 0 112 0v4.571a1 1 0 00.725.962l5 1.428a1 1 0 001.17-1.408l-7-14z" /></svg>
+                    </button>
                 </div>
+                <p className="text-center text-xs text-slate-400 mt-2">Lumi может ошибаться. Проверяйте важные данные.</p>
             </div>
         </div>
     );
