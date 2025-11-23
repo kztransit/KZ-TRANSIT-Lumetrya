@@ -1,8 +1,9 @@
-import { GoogleGenAI, FunctionDeclaration, SchemaType } from "@google/genai";
+import { GoogleGenAI } from "@google/genai";
 import { UserData } from "../types";
 
 // --- ИНСТРУМЕНТЫ (Экспортируем их для Voice Assistant, но в текстовом чате отключаем) ---
 // Определяем как обычные объекты JS, чтобы избежать конфликтов типов при билде
+
 export const navigationFunctionDeclaration = {
     name: 'navigateToPage',
     description: 'Переходит на указанную страницу приложения.',
@@ -101,12 +102,27 @@ export const analyzeReportImage = async (mimeType: string, base64Data: string): 
     
     const client = new GoogleGenAI({ apiKey });
 
+    // ИСПОЛЬЗУЕМ УСИЛЕННЫЙ ПРОМПТ ДЛЯ ДЕНЕГ
     const response = await client.models.generateContent({
         model: "models/gemini-2.0-flash-exp",
         config: {
-            systemInstruction: `Ты — аналитик данных. Извлеки цифры из отчета.
+            systemInstruction: `Ты — аналитик данных. Извлеки цифры из скриншота отчета.
+            
+            ВАЖНО ПРО "sales" (Выручка):
+            - Ищи колонки "Сумма", "Выручка", "Оборот", "Revenue", "Total".
+            - ЭТО ДОЛЖНЫ БЫТЬ ДЕНЬГИ (например: 372289 или 5 000 000), А НЕ КОЛИЧЕСТВО (например: 3 или 21).
+            - Если видишь две колонки "Продажи" (шт) и "Продажи" (деньги) — в поле 'sales' пиши ДЕНЬГИ.
+            
             Верни JSON объект строго с ключами "РТИ" и "3D".
-            Внутри каждого ключа: budget, clicks, leads, proposals, invoices, deals, sales.
+            Внутри каждого ключа: 
+            - budget (бюджет)
+            - clicks (клики)
+            - leads (лиды)
+            - proposals (выставленные КП)
+            - invoices (выставленные счета)
+            - deals (сделки)
+            - sales (ДЕНЕЖНАЯ ВЫРУЧКА)
+
             Все значения — ЧИСЛА (0 если нет данных).`
         },
         contents: [
@@ -114,7 +130,7 @@ export const analyzeReportImage = async (mimeType: string, base64Data: string): 
                 role: "user",
                 parts: [
                     { inlineData: { mimeType, data: base64Data } },
-                    { text: "Извлеки данные из этого отчета." }
+                    { text: "Извлеки данные из этого отчета. Внимание на поле sales - это деньги." }
                 ]
             }
         ]
