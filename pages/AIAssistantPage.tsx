@@ -1,21 +1,14 @@
-import React, { useState, useRef, useEffect, useCallback } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { v4 as uuidv4 } from 'uuid';
-import { GoogleGenAI, LiveSession, LiveServerMessage, Modality, Blob } from "@google/genai";
 import { 
     getAIAssistantResponse, 
     analyzeReportImage, 
     analyzeProposalsImage, 
-    analyzeCampaignsImage,
-    // Импорты функций нужны только для Голосового режима (local voice)
-    createOtherReportFunctionDeclaration, 
-    updateOtherReportKpiFunctionDeclaration, 
-    createCommercialProposalFunctionDeclaration, 
-    updateCommercialProposalFunctionDeclaration,
-    navigationFunctionDeclaration 
+    analyzeCampaignsImage
 } from '../services/geminiService';
 import { UserData, Report, CommercialProposal, AdCampaign, OtherReport } from '../types';
-import { fileToBase64, decode, decodeAudioData, encode } from '../utils';
+import { fileToBase64 } from '../utils';
 
 type UploadType = 'report' | 'proposals' | 'campaigns';
 
@@ -60,9 +53,6 @@ const generateContext = (data: UserData) => {
     `;
 };
 
-// ... (UploadTypeModal, monthNames, ConfirmReportImportModal, ConfirmProposalsImportModal, ConfirmCampaignsImportModal остаются без изменений)
-// Я их свернул для краткости, они работают корректно и не влияют на ошибку.
-// Вставьте их код сюда из вашего предыдущего файла.
 const UploadTypeModal: React.FC<{onClose: () => void, onSelect: (type: UploadType) => void}> = ({onClose, onSelect}) => (
     <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4">
         <div className="bg-white dark:bg-slate-800 rounded-xl shadow-2xl w-full max-w-md">
@@ -85,8 +75,6 @@ const UploadTypeModal: React.FC<{onClose: () => void, onSelect: (type: UploadTyp
 const monthNames = ["Январь", "Февраль", "Март", "Апрель", "Май", "Июнь", "Июль", "Август", "Сентябрь", "Октябрь", "Ноябрь", "Декабрь"];
 
 const ConfirmReportImportModal: React.FC<any> = ({ onClose, onSave, existingReports, initialData }) => {
-    // Вставьте полный код этого компонента из вашего файла
-    // Для экономии места я его не дублирую, так как там ошибок нет
      const [month, setMonth] = useState(new Date().getMonth() + 1);
     const [year, setYear] = useState(new Date().getFullYear());
     const [error, setError] = useState('');
@@ -146,7 +134,6 @@ const ConfirmReportImportModal: React.FC<any> = ({ onClose, onSave, existingRepo
 };
 
 const ConfirmProposalsImportModal: React.FC<any> = ({ onClose, onSave, initialData }) => {
-    // Аналогично, используем существующий код
      const [proposals, setProposals] = useState(initialData);
     const handleFieldChange = (index: number, field: keyof CommercialProposal, value: any) => {
         const updated = [...proposals];
@@ -254,182 +241,21 @@ const AIAssistantPage: React.FC<AIAssistantPageProps> = ({
     const [proposalsToConfirm, setProposalsToConfirm] = useState<Omit<CommercialProposal, 'id'>[] | null>(null);
     const [campaignsToConfirm, setCampaignsToConfirm] = useState<Omit<AdCampaign, 'id'>[] | null>(null);
 
-    // Voice Conversation State
-    const [isSessionActive, setIsSessionActive] = useState(false);
-    const [sessionStatus, setSessionStatus] = useState<'idle' | 'connecting' | 'listening' | 'speaking'>('idle');
-    const [liveUserTranscript, setLiveUserTranscript] = useState('');
-    const [liveAiTranscript, setLiveAiTranscript] = useState('');
-    const [error, setError] = useState('');
-    
-    const sessionRef = useRef<any>(null);
-    const inputAudioContextRef = useRef<AudioContext | null>(null);
-    const outputAudioContextRef = useRef<AudioContext | null>(null);
-    const scriptProcessorRef = useRef<ScriptProcessorNode | null>(null);
-    const mediaStreamRef = useRef<MediaStream | null>(null);
-    const mediaStreamSourceRef = useRef<MediaStreamAudioSourceNode | null>(null);
-    const nextStartTimeRef = useRef(0);
-    const audioSourcesRef = useRef(new Set<AudioBufferSourceNode>());
-    const userTranscriptRef = useRef('');
-    const aiTranscriptRef = useRef('');
-
     const scrollToBottom = () => {
         messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
     };
-    useEffect(scrollToBottom, [messages, liveUserTranscript, liveAiTranscript]);
+    useEffect(scrollToBottom, [messages]);
     
     const addMessage = (message: Omit<Message, 'id'>) => {
         setMessages(prev => [...prev, {...message, id: uuidv4()}]);
     }
 
-    const cleanupSession = useCallback(() => {
-        mediaStreamRef.current?.getTracks().forEach(track => track.stop());
-        if (scriptProcessorRef.current) {
-            scriptProcessorRef.current.onaudioprocess = null;
-            scriptProcessorRef.current.disconnect();
-        }
-        mediaStreamSourceRef.current?.disconnect();
-        inputAudioContextRef.current?.close().catch(console.error);
-        outputAudioContextRef.current?.close().catch(console.error);
-    
-        mediaStreamRef.current = null;
-        scriptProcessorRef.current = null;
-        mediaStreamSourceRef.current = null;
-        inputAudioContextRef.current = null;
-        outputAudioContextRef.current = null;
-        sessionRef.current = null;
-        nextStartTimeRef.current = 0;
-        audioSourcesRef.current.forEach(source => source.stop());
-        audioSourcesRef.current.clear();
-        
-        setIsSessionActive(false);
-        setSessionStatus('idle');
-    }, []);
-    
-    useEffect(() => {
-      return () => {
-        if(sessionRef.current) sessionRef.current.close();
-        cleanupSession();
-      }
-    }, [cleanupSession]);
-
-    useEffect(() => {
-        if (isGlobalVoiceActive && isSessionActive) {
-            sessionRef.current?.close();
-        }
-    }, [isGlobalVoiceActive, isSessionActive]);
-
-
-    const handleToggleVoiceSession = async () => {
-        if (isSessionActive) {
-            sessionRef.current?.close();
-            return;
-        }
-        if (isGlobalVoiceActive) onDisableGlobalVoice();
-        if (showWelcome) setShowWelcome(false);
-        setSessionStatus('connecting');
-        setLiveUserTranscript('');
-        setLiveAiTranscript('');
-        setError('');
-
-        const apiKey = import.meta.env.VITE_GOOGLE_API_KEY;
-        if (!apiKey) {
-            setError("Ключ API не найден.");
-            setSessionStatus('idle');
-            return;
-        }
-
-        try {
-            const ai = new GoogleGenAI({ apiKey: apiKey });
-            // Здесь мы используем функции, потому что это Голосовой режим, а не текстовый
-            const sessionPromise = ai.live.connect({
-                model: 'models/gemini-2.0-flash-exp',
-                config: {
-                    responseModalities: [Modality.AUDIO],
-                    speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName: 'Zephyr' } } },
-                    systemInstruction: generateContext(userData),
-                    tools: [
-                        { googleSearch: {} },
-                        {functionDeclarations: [
-                            createOtherReportFunctionDeclaration,
-                            updateOtherReportKpiFunctionDeclaration,
-                            createCommercialProposalFunctionDeclaration,
-                            updateCommercialProposalFunctionDeclaration,
-                            navigationFunctionDeclaration
-                        ]}
-                    ],
-                },
-                callbacks: {
-                    onopen: async () => {
-                        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-                        mediaStreamRef.current = stream;
-                        
-                        inputAudioContextRef.current = new (window.AudioContext || (window as any).webkitAudioContext)({ sampleRate: 16000 });
-                        outputAudioContextRef.current = new (window.AudioContext || (window as any).webkitAudioContext)({ sampleRate: 24000 });
-                        
-                        mediaStreamSourceRef.current = inputAudioContextRef.current.createMediaStreamSource(stream);
-                        scriptProcessorRef.current = inputAudioContextRef.current.createScriptProcessor(4096, 1, 1);
-                        
-                        scriptProcessorRef.current.onaudioprocess = (audioProcessingEvent) => {
-                            const inputData = audioProcessingEvent.inputBuffer.getChannelData(0);
-                            const pcmBlob: Blob = {
-                                data: encode(new Uint8Array(new Int16Array(inputData.map(n => n * 32768)).buffer)),
-                                mimeType: 'audio/pcm;rate=16000',
-                            };
-                            sessionPromise.then((session) => session.sendRealtimeInput({ media: pcmBlob }));
-                        };
-                        mediaStreamSourceRef.current.connect(scriptProcessorRef.current);
-                        scriptProcessorRef.current.connect(inputAudioContextRef.current.destination);
-                        setIsSessionActive(true);
-                        setSessionStatus('listening');
-                    },
-                    onmessage: async (message: LiveServerMessage) => {
-                        if (message.serverContent?.outputTranscription) setLiveAiTranscript(prev => prev + message.serverContent?.outputTranscription?.text);
-                        if (message.serverContent?.inputTranscription) setLiveUserTranscript(prev => prev + message.serverContent?.inputTranscription?.text);
-
-                        if (message.toolCall) {
-                            for (const fc of message.toolCall.functionCalls) {
-                                let functionResult = "Действие выполнено.";
-                                if (fc.name === 'navigateToPage') {
-                                    navigate(fc.args.page as string);
-                                    functionResult = `Переход: ${fc.args.page}`;
-                                }
-                                // Обработка других функций... (сокращено для примера, но логика остается)
-                                sessionPromise.then((session) => {
-                                   session.sendToolResponse({ functionResponses: { id: fc.id, name: fc.name, response: { result: functionResult } } });
-                                });
-                            }
-                        }
-                        
-                        if (message.serverContent?.turnComplete) {
-                            addMessage({ text: userTranscriptRef.current, sender: 'user' }); // Исправьте ref на state если нужно
-                            addMessage({ text: aiTranscriptRef.current, sender: 'ai' });
-                        }
-
-                        if (message.serverContent?.modelTurn?.parts) {
-                            for (const part of message.serverContent.modelTurn.parts) {
-                                if (part.inlineData?.data && outputAudioContextRef.current) {
-                                    const outCtx = outputAudioContextRef.current;
-                                    const audioBuffer = await decodeAudioData(decode(part.inlineData.data), outCtx, 24000, 1);
-                                    const source = outCtx.createBufferSource();
-                                    source.buffer = audioBuffer;
-                                    source.connect(outCtx.destination);
-                                    source.start();
-                                }
-                            }
-                        }
-                    },
-                    onclose: cleanupSession,
-                    onerror: () => { setError('Ошибка сессии'); cleanupSession(); },
-                }
-            });
-            sessionRef.current = await sessionPromise;
-        } catch(err) { cleanupSession(); }
-    };
-
-
     const handleSend = async (promptText?: string) => {
         const textToSend = promptText || input;
         if (textToSend.trim() === '' || isLoading) return;
+        
+        // Если работает глобальный ассистент (в сайдбаре) - выключаем его, чтобы не мешал
+        if (isGlobalVoiceActive) onDisableGlobalVoice();
         
         if (showWelcome) setShowWelcome(false);
 
@@ -440,7 +266,7 @@ const AIAssistantPage: React.FC<AIAssistantPageProps> = ({
         try {
             const fullContext = generateContext(userData);
             
-            // ВАЖНО: Мы больше не обрабатываем functionCall, так как они отключены в сервисе
+            // Используем ТОЛЬКО текстовый режим
             const { text } = await getAIAssistantResponse(textToSend, userData, fullContext);
             
             if (text) {
@@ -506,15 +332,6 @@ const AIAssistantPage: React.FC<AIAssistantPageProps> = ({
     const handleConfirmProposals = (final: any[]) => { addMultipleProposals(final); setProposalsToConfirm(null); addMessage({ text: `Импортировано КП: ${final.length}`, sender: 'ai' }); };
     const handleConfirmCampaigns = (final: any[]) => { addMultipleCampaigns(final); setCampaignsToConfirm(null); addMessage({ text: `Импортировано кампаний: ${final.length}`, sender: 'ai' }); };
     
-    const getStatusText = () => {
-        switch (sessionStatus) {
-            case 'connecting': return 'Подключение...';
-            case 'listening': return 'Слушаю...';
-            case 'speaking': return 'Говорю...';
-            default: return null;
-        }
-    }
-
     return (
         <div className="h-[calc(100vh-120px)] flex flex-col max-w-4xl mx-auto w-full">
             {isUploadTypeModalOpen && <UploadTypeModal onClose={() => setUploadTypeModalOpen(false)} onSelect={handleUploadTypeSelect} />}
@@ -544,14 +361,13 @@ const AIAssistantPage: React.FC<AIAssistantPageProps> = ({
             </div>
             
             <div className="relative">
-                 {isSessionActive && <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 px-3 py-1 bg-black/70 text-white text-sm rounded-full">{getStatusText()}</div>}
-                {error && <p className="text-center text-red-500 text-sm mb-2">{error}</p>}
-
                 <div className="bg-white dark:bg-slate-800 rounded-xl p-2 flex items-center shadow-lg">
                     <input type="file" ref={fileInputRef} onChange={handleFileSelected} className="hidden" accept="image/*,application/pdf" />
-                    <button onClick={handleAttachmentClick} title="Прикрепить" className="p-2 text-slate-500 hover:text-blue-600" disabled={isSessionActive}>📎</button>
-                    <button onClick={handleToggleVoiceSession} title="Голос" className={`p-2 rounded-full ${isSessionActive ? 'text-red-500 animate-pulse' : 'text-slate-500'}`}>🎤</button>
-                    <input type="text" value={input} onChange={(e) => setInput(e.target.value)} onKeyPress={(e) => e.key === 'Enter' && handleSend()} placeholder="Спросите Lumi..." className="flex-grow bg-transparent px-3 outline-none dark:text-white" disabled={isLoading || isSessionActive} />
+                    <button onClick={handleAttachmentClick} title="Прикрепить" className="p-2 text-slate-500 hover:text-blue-600">📎</button>
+                    
+                    {/* МИКРОФОН УДАЛЕН ОТСЮДА */}
+                    
+                    <input type="text" value={input} onChange={(e) => setInput(e.target.value)} onKeyPress={(e) => e.key === 'Enter' && handleSend()} placeholder="Спросите Lumi..." className="flex-grow bg-transparent px-3 outline-none dark:text-white" disabled={isLoading} />
                     <button onClick={() => handleSend()} disabled={isLoading || !input.trim()} className="bg-blue-600 text-white rounded-lg p-2">➤</button>
                 </div>
             </div>
