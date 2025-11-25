@@ -1,5 +1,4 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { useNavigate } from 'react-router-dom';
 import { v4 as uuidv4 } from 'uuid';
 import { 
     getAIAssistantResponse, 
@@ -7,369 +6,280 @@ import {
     analyzeProposalsImage, 
     analyzeCampaignsImage
 } from '../services/geminiService';
-import { UserData, Report, CommercialProposal, AdCampaign, OtherReport } from '../types';
+import { UserData } from '../types';
 import { fileToBase64 } from '../utils';
 
-type UploadType = 'report' | 'proposals' | 'campaigns';
-
+// --- ТИПЫ ---
 interface Message {
     id: string;
     text: string;
     sender: 'user' | 'ai';
+    suggestions?: string[]; // Кнопки-подсказки
+    isSystemInfo?: boolean; // Скрытые технические сообщения (например, "файл прочитан")
 }
-
-const generateContext = (data: UserData) => {
-    const today = new Date().toLocaleDateString('ru-RU');
-    
-    const reportStr = data.reports.slice(0, 5).map(r => `[ОТЧЕТ ${r.name}]: Продажи ${r.metrics.sales}, Лиды ${r.metrics.leads}`).join('; ');
-    const propStr = data.proposals.slice(0, 10).map(p => `[КП]: ${p.company}, ${p.amount}тг, Статус: ${p.status}`).join('; ');
-    const campStr = data.campaigns.slice(0, 5).map(c => `[РЕКЛАМА]: ${c.name}, Статус ${c.status}`).join('; ');
-    const payStr = data.payments.slice(0, 5).map(p => `[ПЛАТЕЖ]: ${p.serviceName}, ${p.amount}`).join('; ');
-    
-    return `
-    СЕГОДНЯ: ${today}
-    ИМЯ: Люми.
-    РОЛЬ: Умный AI-ассистент компании ${data.companyProfile.companyName}.
-    
-    ТВОЯ ЗАДАЧА В ЭТОМ ЧАТЕ:
-    1. Искать актуальную информацию в интернете (курсы, новости, ГОСТы).
-    2. Анализировать данные компании (предоставлены ниже).
-    3. Помогать с текстами, переводами, расчетами.
-    4. Давать рекомендации по бизнесу.
-    
-    ВАЖНО:
-    - Ты НЕ можешь управлять интерфейсом (открывать страницы) в этом чате.
-    - Ты НЕ создаешь документы автоматически в этом чате.
-    - Просто давай текстовые ответы и советы.
-
-    ДАННЫЕ КОМПАНИИ:
-    ОТЧЕТЫ: ${reportStr}
-    КП: ${propStr}
-    РЕКЛАМА: ${campStr}
-    ПЛАТЕЖИ: ${payStr}
-    ПРОЧЕЕ: ${JSON.stringify(data.otherReports)}
-    
-    ИНСТРУКЦИЯ: ${data.companyProfile.aiSystemInstruction}
-    `;
-};
-
-const UploadTypeModal: React.FC<{onClose: () => void, onSelect: (type: UploadType) => void}> = ({onClose, onSelect}) => (
-    <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4">
-        <div className="bg-white dark:bg-slate-800 rounded-xl shadow-2xl w-full max-w-md">
-            <div className="p-6 border-b border-gray-200 dark:border-slate-700 flex justify-between items-center">
-                <h2 className="text-xl font-bold">Анализ файла</h2>
-                <button type="button" onClick={onClose} className="text-slate-400 hover:text-slate-800 dark:hover:text-slate-200 text-2xl">&times;</button>
-            </div>
-            <div className="p-6">
-                <p className="text-slate-600 dark:text-slate-300 mb-4">Какой тип данных содержится в файле?</p>
-                <div className="space-y-3">
-                    <button onClick={() => onSelect('report')} className="w-full text-left p-3 bg-gray-100 hover:bg-blue-100 dark:bg-slate-700 dark:hover:bg-blue-500/20 rounded-lg">Маркетинговый отчет</button>
-                    <button onClick={() => onSelect('proposals')} className="w-full text-left p-3 bg-gray-100 hover:bg-blue-100 dark:bg-slate-700 dark:hover:bg-blue-500/20 rounded-lg">Коммерческие предложения</button>
-                    <button onClick={() => onSelect('campaigns')} className="w-full text-left p-3 bg-gray-100 hover:bg-blue-100 dark:bg-slate-700 dark:hover:bg-blue-500/20 rounded-lg">Рекламные кампании</button>
-                </div>
-            </div>
-        </div>
-    </div>
-);
-
-const monthNames = ["Январь", "Февраль", "Март", "Апрель", "Май", "Июнь", "Июль", "Август", "Сентябрь", "Октябрь", "Ноябрь", "Декабрь"];
-
-const ConfirmReportImportModal: React.FC<any> = ({ onClose, onSave, existingReports, initialData }) => {
-     const [month, setMonth] = useState(new Date().getMonth() + 1);
-    const [year, setYear] = useState(new Date().getFullYear());
-    const [error, setError] = useState('');
-    const [editableData, setEditableData] = useState<Report['directions']>(initialData);
-
-    const handleMetricChange = (direction: 'РТИ' | '3D', metric: keyof Report['metrics'], value: string) => {
-        const defaultMetrics = { budget: 0, clicks: 0, leads: 0, proposals: 0, invoices: 0, deals: 0, sales: 0 };
-        setEditableData(prev => ({
-            ...prev,
-            [direction]: {
-                ...(prev[direction] || defaultMetrics),
-                [metric]: Number(value) || 0
-            }
-        }));
-    };
-
-    const handleSave = () => {
-        setError('');
-        const reportName = `Отчет ${monthNames[month - 1]} ${year}`;
-        if (existingReports.some((r: any) => r.name === reportName)) {
-            setError(`Отчет для "${reportName}" уже существует.`);
-            return;
-        }
-        const reportDate = new Date(year, month - 1, 1).toISOString().split('T')[0];
-        onSave(reportName, reportDate, editableData);
-    };
-    
-    const metricLabels: Record<keyof Report['metrics'], string> = {
-      budget: 'Бюджет', clicks: 'Клики', leads: 'Лиды', proposals: 'КП', invoices: 'Счета', deals: 'Сделки', sales: 'Выручка'
-    };
-
-    return (
-     <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4">
-        <div className="bg-white dark:bg-slate-800 rounded-xl shadow-2xl w-full max-w-3xl max-h-[90vh] flex flex-col">
-            <div className="p-6 border-b dark:border-slate-700"><h2 className="text-xl font-bold">Проверка и создание отчета</h2></div>
-            <div className="p-6 space-y-4 overflow-y-auto">
-                <div className="grid grid-cols-2 gap-4">
-                    <div><label className="text-sm block">Месяц</label><select value={month} onChange={e => setMonth(Number(e.target.value))} className="w-full bg-gray-100 p-2 rounded">{monthNames.map((n, i) => <option key={n} value={i+1}>{n}</option>)}</select></div>
-                    <div><label className="text-sm block">Год</label><input type="number" value={year} onChange={e => setYear(Number(e.target.value))} className="w-full bg-gray-100 p-2 rounded"/></div>
-                </div>
-                 {error && <p className="text-red-500 text-sm">{error}</p>}
-                 <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                    {(['РТИ', '3D'] as const).map(dir => (
-                        <div key={dir} className="space-y-3 p-4 border rounded">
-                            <h3 className="font-semibold">{dir}</h3>
-                            {Object.keys(metricLabels).map(key => (
-                                <div key={key}><label className="text-xs">{metricLabels[key as keyof typeof metricLabels]}</label><input type="number" value={editableData[dir]?.[key as keyof Report['metrics']] ?? 0} onChange={e => handleMetricChange(dir, key as keyof Report['metrics'], e.target.value)} className="w-full bg-gray-50 p-1 rounded text-sm"/></div>
-                            ))}
-                        </div>
-                    ))}
-                 </div>
-            </div>
-            <div className="p-6 border-t flex justify-end gap-3"><button onClick={onClose} className="bg-gray-200 px-4 py-2 rounded">Отмена</button><button onClick={handleSave} className="bg-blue-600 text-white px-4 py-2 rounded">Создать</button></div>
-        </div>
-    </div>
-    )
-};
-
-const ConfirmProposalsImportModal: React.FC<any> = ({ onClose, onSave, initialData }) => {
-     const [proposals, setProposals] = useState(initialData);
-    const handleFieldChange = (index: number, field: keyof CommercialProposal, value: any) => {
-        const updated = [...proposals];
-        (updated[index] as any)[field] = value;
-        setProposals(updated);
-    };
-    const handleDeleteRow = (index: number) => setProposals(proposals.filter((_: any, i: number) => i !== index));
-    const handleGlobalDirectionChange = (e: any) => {
-        if(e.target.value === 'keep') return;
-        setProposals((prev: any[]) => prev.map(p => ({...p, direction: e.target.value})));
-    };
-    return (
-        <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4">
-            <div className="bg-white dark:bg-slate-800 rounded-xl shadow-2xl w-full max-w-5xl max-h-[90vh] flex flex-col">
-                <div className="p-6 border-b"><h2 className="text-xl font-bold">Импорт КП</h2></div>
-                <div className="p-6 overflow-auto">
-                    <div className="flex justify-between mb-4"><p>Проверьте данные</p><select onChange={handleGlobalDirectionChange} className="bg-gray-100 p-2 rounded"><option value="keep">--</option><option value="РТИ">РТИ</option><option value="3D">3D</option></select></div>
-                    <table className="w-full text-sm"><tbody>{proposals.map((p: any, i: number) => (
-                        <tr key={i} className="border-b"><td><input value={p.date} onChange={e => handleFieldChange(i, 'date', e.target.value)} className="w-full bg-gray-100 p-1"/></td><td><input value={p.item} onChange={e => handleFieldChange(i, 'item', e.target.value)} className="w-full bg-gray-100 p-1"/></td><td><input value={p.amount} onChange={e => handleFieldChange(i, 'amount', e.target.value)} className="w-full bg-gray-100 p-1"/></td><td><button onClick={() => handleDeleteRow(i)} className="text-red-500">x</button></td></tr>
-                    ))}</tbody></table>
-                </div>
-                <div className="p-6 border-t flex justify-end gap-3"><button onClick={onClose} className="bg-gray-200 px-4 py-2 rounded">Отмена</button><button onClick={() => onSave(proposals)} className="bg-blue-600 text-white px-4 py-2 rounded">Импорт</button></div>
-            </div>
-        </div>
-    );
-};
-
-const ConfirmCampaignsImportModal: React.FC<any> = ({ onClose, onSave, initialData }) => {
-    const [campaigns, setCampaigns] = useState(initialData);
-    const handleDeleteRow = (index: number) => setCampaigns(campaigns.filter((_:any, i:number) => i !== index));
-    return (
-        <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4">
-            <div className="bg-white dark:bg-slate-800 rounded-xl shadow-2xl w-full max-w-5xl max-h-[90vh] flex flex-col">
-                <div className="p-6 border-b"><h2 className="text-xl font-bold">Импорт Кампаний</h2></div>
-                <div className="p-6 overflow-auto"><table className="w-full text-sm"><tbody>{campaigns.map((c:any, i:number) => (
-                    <tr key={i} className="border-b"><td>{c.name}</td><td>{c.status}</td><td>{c.spend}</td><td><button onClick={() => handleDeleteRow(i)} className="text-red-500">x</button></td></tr>
-                ))}</tbody></table></div>
-                <div className="p-6 border-t flex justify-end gap-3"><button onClick={onClose} className="bg-gray-200 px-4 py-2 rounded">Отмена</button><button onClick={() => onSave(campaigns)} className="bg-blue-600 text-white px-4 py-2 rounded">Импорт</button></div>
-            </div>
-        </div>
-    )
-};
-
-
-const WelcomeScreen: React.FC<{ onPromptClick: (prompt: string) => void }> = ({ onPromptClick }) => {
-    const prompts = [
-        "Какой курс доллара на сегодня?",
-        "Какие есть ГОСТы на техпластину?",
-        "Сделай краткий анализ наших продаж",
-        "Переведи 'счет на оплату' на английский",
-    ];
-
-    return (
-        <div className="flex flex-col items-center justify-center h-full text-center p-4">
-            <div className="flex items-center justify-center gap-3 mb-4">
-                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 40 40" className="h-12 w-12" aria-hidden="true">
-                    <circle cx="14" cy="20" r="11" fill="#2563eb" opacity="0.9" />
-                    <circle cx="26" cy="20" r="11" fill="#16a34a" opacity="0.9" />
-                </svg>
-                <h1 className="text-5xl font-bold text-slate-800 dark:text-slate-100">Lumi</h1>
-            </div>
-            <p className="text-slate-500 dark:text-slate-400 text-lg">Я могу искать информацию в интернете и анализировать ваши данные.</p>
-            
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mt-8 w-full max-w-2xl">
-                {prompts.map((prompt, index) => (
-                    <button key={index} onClick={() => onPromptClick(prompt)} className="p-4 bg-white dark:bg-slate-800 hover:bg-blue-100/50 dark:hover:bg-blue-500/10 rounded-lg text-left text-slate-700 dark:text-slate-200 hover:text-blue-800 dark:hover:text-blue-400 transition-colors border border-gray-200/80 dark:border-slate-700/80 shadow-sm">
-                        <p className="font-medium text-sm">{prompt}</p>
-                    </button>
-                ))}
-            </div>
-        </div>
-    );
-};
 
 interface AIAssistantPageProps {
     userData: UserData;
-    addReport: (report: Omit<Report, 'id'>) => void;
-    addMultipleProposals: (proposals: Omit<CommercialProposal, 'id'>[]) => void;
-    addMultipleCampaigns: (campaigns: Omit<AdCampaign, 'id'>[]) => void;
-    addOtherReport: (report: Omit<OtherReport, 'id'>) => void;
-    updateOtherReport: (report: OtherReport) => void;
-    addProposal: (proposal: Omit<CommercialProposal, 'id'>) => void;
-    updateProposal: (proposal: CommercialProposal) => void;
-    isGlobalVoiceActive: boolean;
-    onDisableGlobalVoice: () => void;
+    // Остальные пропсы оставляем для совместимости с App.tsx, но не используем
+    [key: string]: any; 
 }
 
-const AIAssistantPage: React.FC<AIAssistantPageProps> = ({ 
-    userData, addReport, addMultipleProposals, addMultipleCampaigns, 
-    addOtherReport, updateOtherReport, addProposal, updateProposal,
-    isGlobalVoiceActive, onDisableGlobalVoice 
-}) => {
-    const [messages, setMessages] = useState<Message[]>([]);
-    const [showWelcome, setShowWelcome] = useState(true);
+// --- ГЕНЕРАЦИЯ КОНТЕКСТА ---
+const generateContext = (data: UserData) => {
+    const today = new Date().toLocaleDateString('ru-RU');
+    
+    // Сжатый контекст данных компании
+    const knowledgeBase = {
+        reports: data.reports.slice(0, 3).map(r => ({ period: r.name, metrics: r.metrics })),
+        activeProposals: data.proposals.filter(p => p.status === 'Ожидание').slice(0, 10),
+        recentCampaigns: data.campaigns.slice(0, 5),
+        company: data.companyProfile.details
+    };
+
+    return `
+    SYSTEM_CONTEXT:
+    DATE: ${today}
+    ROLE: Ты — Lumi, стратегический консультант и бизнес-аналитик KZ TRANSIT.
+    
+    DATA SNAPSHOT: ${JSON.stringify(knowledgeBase)}
+
+    INSTRUCTIONS:
+    1. Твоя цель — помогать принимать решения, а не просто заполнять таблицы.
+    2. Если пользователь присылает данные (текст или файл), проанализируй их, найди риски и возможности.
+    3. Отвечай на РУССКОМ языке. Форматирование: Markdown.
+    4. Будь лаконична, структурируй ответ (используй буллиты).
+    
+    USER CUSTOM INSTRUCTIONS:
+    ${data.companyProfile.aiSystemInstruction}
+    `;
+};
+
+const AIAssistantPage: React.FC<AIAssistantPageProps> = ({ userData }) => {
+    const [messages, setMessages] = useState<Message[]>([
+        { 
+            id: '1', 
+            text: 'Привет! Я Lumi. Я готова проанализировать ваши документы или обсудить стратегию. С чего начнем?', 
+            sender: 'ai',
+            suggestions: ['Анализ продаж за месяц', 'Оценка эффективности рекламы', 'Прогноз выручки']
+        }
+    ]);
     const [input, setInput] = useState('');
     const [isLoading, setIsLoading] = useState(false);
+    
+    // Состояние для прикрепленного файла
+    const [attachedFile, setAttachedFile] = useState<File | null>(null);
+    
     const messagesEndRef = useRef<HTMLDivElement>(null);
     const fileInputRef = useRef<HTMLInputElement>(null);
-    const navigate = useNavigate();
-    
-    const [fileForUpload, setFileForUpload] = useState<File | null>(null);
-    const [isUploadTypeModalOpen, setUploadTypeModalOpen] = useState(false);
-    
-    const [reportDataToCreate, setReportDataToCreate] = useState<Report['directions'] | null>(null);
-    const [proposalsToConfirm, setProposalsToConfirm] = useState<Omit<CommercialProposal, 'id'>[] | null>(null);
-    const [campaignsToConfirm, setCampaignsToConfirm] = useState<Omit<AdCampaign, 'id'>[] | null>(null);
 
-    const scrollToBottom = () => {
-        messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-    };
+    const scrollToBottom = () => { messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' }); };
     useEffect(scrollToBottom, [messages]);
-    
-    const addMessage = (message: Omit<Message, 'id'>) => {
-        setMessages(prev => [...prev, {...message, id: uuidv4()}]);
-    }
 
-    const handleSend = async (promptText?: string) => {
-        const textToSend = promptText || input;
-        if (textToSend.trim() === '' || isLoading) return;
-        
-        // Если работает глобальный ассистент (в сайдбаре) - выключаем его, чтобы не мешал
-        if (isGlobalVoiceActive) onDisableGlobalVoice();
-        
-        if (showWelcome) setShowWelcome(false);
+    // Функция получения подсказок на основе ответа (Эмуляция, в идеале должен давать ИИ)
+    const generateSuggestions = (aiText: string): string[] => {
+        const text = aiText.toLowerCase();
+        if (text.includes('отчет') || text.includes('продаж')) return ['Сравни с прошлым месяцем', 'Где мы теряем деньги?', 'Составь план роста'];
+        if (text.includes('кп') || text.includes('предложение')) return ['Оцени маржинальность', 'Как повысить вероятность сделки?', 'Напиши follow-up письмо'];
+        if (text.includes('кампани') || text.includes('реклам')) return ['Оптимизируй бюджет', 'Какой канал эффективнее?', 'Придумай новый оффер'];
+        if (text.includes('риск') || text.includes('проблем')) return ['Предложи решение', 'Кто виноват?', 'Как избежать этого?'];
+        return ['Подробнее', 'Сделай выводы', 'Другой вопрос'];
+    };
 
-        addMessage({ text: textToSend, sender: 'user' });
+    const handleSend = async (textOverride?: string) => {
+        const textToSend = textOverride || input;
+        if ((!textToSend.trim() && !attachedFile) || isLoading) return;
+
+        // 1. Добавляем сообщение пользователя
+        const newMessage: Message = { 
+            id: uuidv4(), 
+            text: textToSend || (attachedFile ? `📎 Документ: ${attachedFile.name}` : ''), 
+            sender: 'user' 
+        };
+        setMessages(prev => [...prev, newMessage]);
         setInput('');
         setIsLoading(true);
         
+        // Очищаем подсказки у предыдущих сообщений
+        setMessages(prev => prev.map(m => ({ ...m, suggestions: undefined })));
+
         try {
-            const fullContext = generateContext(userData);
-            
-            // Используем ТОЛЬКО текстовый режим
-            const { text } = await getAIAssistantResponse(textToSend, userData, fullContext);
-            
-            if (text) {
-                addMessage({ text, sender: 'ai' });
-            } else {
-                addMessage({ text: "Молчание (нет текстового ответа от модели).", sender: 'ai' });
+            let contextData = "";
+
+            // 2. Если есть файл, сначала "читаем" его через наши сервисы
+            if (attachedFile) {
+                const base64 = await fileToBase64(attachedFile);
+                let fileContent = "";
+                
+                // Пытаемся понять, что это, и извлечь текст/данные
+                // Используем существующие функции как "OCR движки"
+                try {
+                    // Попробуем прогнать как отчет (он возвращает самый чистый JSON с цифрами)
+                    // В идеале тут нужна универсальная функция analyzeDocument, но мы используем то, что есть
+                    const rawData = await analyzeReportImage(attachedFile.type, base64);
+                    fileContent = `ДАННЫЕ ИЗ ФАЙЛА "${attachedFile.name}":\n${rawData}`;
+                } catch (e) {
+                    // Если не вышло как отчет, пробуем как КП (там другая структура)
+                    try {
+                        const rawData = await analyzeProposalsImage(attachedFile.type, base64);
+                        fileContent = `ДАННЫЕ ИЗ ФАЙЛА "${attachedFile.name}":\n${JSON.stringify(rawData)}`;
+                    } catch (e2) {
+                        fileContent = `Не удалось автоматически извлечь структуру из файла, но пользователь его прикрепил.`;
+                    }
+                }
+                
+                contextData = fileContent;
+                setAttachedFile(null); // Сбрасываем файл после отправки
             }
+
+            // 3. Формируем промпт: (Системный контекст + Данные из файла + Вопрос пользователя)
+            const systemContext = generateContext(userData);
+            const finalPrompt = `
+                ${contextData ? `ВОТ ДАННЫЕ ИЗ ЗАГРУЖЕННОГО ДОКУМЕНТА:\n${contextData}\n\n` : ''}
+                ВОПРОС ПОЛЬЗОВАТЕЛЯ: ${textToSend}
+            `;
+
+            // 4. Отправляем в Gemini
+            const response = await getAIAssistantResponse(finalPrompt, userData, systemContext);
+            const responseText = response.text || "Не удалось получить ответ.";
+
+            // 5. Добавляем ответ ИИ с новыми кнопками
+            setMessages(prev => [...prev, { 
+                id: uuidv4(), 
+                text: responseText, 
+                sender: 'ai',
+                suggestions: generateSuggestions(responseText)
+            }]);
 
         } catch (error) {
-            console.error(error);
-            addMessage({ text: 'Извините, произошла ошибка. Попробуйте позже.', sender: 'ai' });
+            setMessages(prev => [...prev, { id: uuidv4(), text: "Произошла ошибка. Попробуйте еще раз.", sender: 'ai' }]);
         } finally {
             setIsLoading(false);
         }
     };
 
-    const handleAttachmentClick = () => fileInputRef.current?.click();
-    const handleFileSelected = (e: React.ChangeEvent<HTMLInputElement>) => {
-        if (e.target.files?.[0]) { setFileForUpload(e.target.files[0]); setUploadTypeModalOpen(true); }
-        e.target.value = '';
-    };
-
-    const handleUploadTypeSelect = async (type: UploadType) => {
-        setUploadTypeModalOpen(false);
-        if (!fileForUpload) return;
-        if (showWelcome) setShowWelcome(false);
-        addMessage({ text: `Загружен файл: ${fileForUpload.name}`, sender: 'user' });
-        setIsLoading(true);
-        addMessage({ text: "Анализирую файл...", sender: 'ai' });
-
-        try {
-            const base64Data = await fileToBase64(fileForUpload);
-            if (type === 'report') {
-                const analysisResult = await analyzeReportImage(fileForUpload.type, base64Data);
-                const parsedDirections = JSON.parse(analysisResult);
-                // Упрощенная логика создания, чтобы не перегружать ответ
-                const emptyMetrics = { budget: 0, clicks: 0, leads: 0, proposals: 0, invoices: 0, deals: 0, sales: 0 };
-                setReportDataToCreate({ 'РТИ': {...emptyMetrics, ...(parsedDirections['РТИ']||{})}, '3D': {...emptyMetrics, ...(parsedDirections['3D']||{})} });
-            } else if (type === 'proposals') {
-                const parsed = await analyzeProposalsImage(fileForUpload.type, base64Data);
-                // Преобразование данных...
-                setProposalsToConfirm((parsed['РТИ']||[]).concat(parsed['3D']||[])); // Упрощено
-                addMessage({ text: `Обнаружено КП. Проверьте данные.`, sender: 'ai' });
-            } else if (type === 'campaigns') {
-                 const parsed = await analyzeCampaignsImage(fileForUpload.type, base64Data);
-                 setCampaignsToConfirm(parsed);
-                 addMessage({ text: `Обнаружено кампаний: ${parsed.length}`, sender: 'ai' });
-            }
-        } catch (err) {
-            addMessage({ text: `Ошибка анализа: ${err instanceof Error ? err.message : 'Неизвестная'}`, sender: 'ai' });
-        } finally {
-            setIsLoading(false);
-            setFileForUpload(null);
+    const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
+        if (e.target.files?.[0]) {
+            setAttachedFile(e.target.files[0]);
         }
+        e.target.value = ''; // Reset input
     };
-    
-    // Функции сохранения (упрощены для примера, используйте свои полные версии)
-    const handleSaveReportFromAI = (name: string, creationDate: string, directions: Report['directions']) => {
-        addReport({ name, creationDate, directions, metrics: {budget:0, clicks:0, leads:0, proposals:0, invoices:0, deals:0, sales:0} }); // Добавить расчет метрик
-        setReportDataToCreate(null);
-        addMessage({ text: `Отчет "${name}" создан.`, sender: 'ai' });
-    };
-    const handleConfirmProposals = (final: any[]) => { addMultipleProposals(final); setProposalsToConfirm(null); addMessage({ text: `Импортировано КП: ${final.length}`, sender: 'ai' }); };
-    const handleConfirmCampaigns = (final: any[]) => { addMultipleCampaigns(final); setCampaignsToConfirm(null); addMessage({ text: `Импортировано кампаний: ${final.length}`, sender: 'ai' }); };
-    
+
     return (
-        <div className="h-[calc(100vh-120px)] flex flex-col max-w-4xl mx-auto w-full">
-            {isUploadTypeModalOpen && <UploadTypeModal onClose={() => setUploadTypeModalOpen(false)} onSelect={handleUploadTypeSelect} />}
-            {reportDataToCreate && <ConfirmReportImportModal onClose={() => setReportDataToCreate(null)} onSave={handleSaveReportFromAI} existingReports={userData.reports} initialData={reportDataToCreate} />}
-            {proposalsToConfirm && <ConfirmProposalsImportModal onClose={() => setProposalsToConfirm(null)} onSave={handleConfirmProposals} initialData={proposalsToConfirm} />}
-            {campaignsToConfirm && <ConfirmCampaignsImportModal onClose={() => setCampaignsToConfirm(null)} onSave={handleConfirmCampaigns} initialData={campaignsToConfirm} />}
+        <div className="flex flex-col h-[calc(100vh-100px)] max-w-5xl mx-auto w-full bg-white dark:bg-slate-800 rounded-2xl shadow-sm overflow-hidden border border-gray-200 dark:border-slate-700">
             
-            <div className="flex-grow overflow-y-auto mb-4 p-1">
-                 {showWelcome ? (
-                    <WelcomeScreen onPromptClick={handleSend} />
-                ) : (
-                    <div className="space-y-4 p-4">
-                        {messages.map((msg) => (
-                            <div key={msg.id} className={`flex items-start gap-2.5 ${msg.sender === 'user' ? 'justify-end' : 'justify-start'}`}>
-                                {msg.sender === 'ai' && (
-                                    <div className="w-8 h-8 rounded-full bg-blue-100 dark:bg-slate-700 flex items-center justify-center text-blue-600">AI</div>
-                                )}
-                                <div className={`px-4 py-2 rounded-2xl max-w-lg shadow ${msg.sender === 'user' ? 'bg-blue-600 text-white rounded-br-none' : 'bg-white dark:bg-slate-700 text-slate-800 dark:text-slate-200 rounded-bl-none'}`}>
-                                    <p className="text-sm whitespace-pre-wrap">{msg.text}</p>
-                                </div>
+            {/* Header */}
+            <div className="p-4 border-b bg-gray-50 dark:bg-slate-900/50 flex justify-between items-center">
+                <div className="flex items-center gap-3">
+                    <div className="w-10 h-10 rounded-full bg-gradient-to-br from-cyan-500 to-blue-600 flex items-center justify-center text-white font-bold shadow-md">
+                        L
+                    </div>
+                    <div>
+                        <h2 className="font-bold text-slate-800 dark:text-white text-lg">Lumi Аналитик</h2>
+                        <p className="text-xs text-slate-500 dark:text-slate-400">Загрузите отчет или задайте вопрос</p>
+                    </div>
+                </div>
+            </div>
+
+            {/* Chat Area */}
+            <div className="flex-1 overflow-y-auto p-4 space-y-6 bg-gray-50/30 dark:bg-slate-800">
+                {messages.map((msg) => (
+                    <div key={msg.id} className={`flex flex-col ${msg.sender === 'user' ? 'items-end' : 'items-start'}`}>
+                        <div className={`flex gap-3 max-w-[85%] ${msg.sender === 'user' ? 'flex-row-reverse' : 'flex-row'}`}>
+                            {msg.sender === 'ai' && (
+                                <div className="w-8 h-8 mt-1 rounded-full bg-cyan-100 dark:bg-slate-700 flex-shrink-0 flex items-center justify-center text-cyan-700 font-bold text-xs">AI</div>
+                            )}
+                            
+                            <div className={`
+                                px-5 py-3.5 rounded-2xl shadow-sm text-sm leading-relaxed whitespace-pre-line
+                                ${msg.sender === 'user' 
+                                    ? 'bg-blue-600 text-white rounded-br-none' 
+                                    : 'bg-white dark:bg-slate-700 text-slate-800 dark:text-slate-200 rounded-bl-none border border-gray-100 dark:border-slate-600'}
+                            `}>
+                                {msg.text}
                             </div>
-                        ))}
-                        {isLoading && <div className="text-slate-500 p-4">Люми думает...</div>}
-                        <div ref={messagesEndRef} />
+                        </div>
+
+                        {/* Кнопки-подсказки (только для последнего сообщения AI) */}
+                        {msg.suggestions && (
+                            <div className="mt-3 ml-11 flex flex-wrap gap-2">
+                                {msg.suggestions.map((sugg, idx) => (
+                                    <button 
+                                        key={idx}
+                                        onClick={() => handleSend(sugg)}
+                                        className="px-3 py-1.5 bg-blue-50 hover:bg-blue-100 dark:bg-slate-700 dark:hover:bg-slate-600 text-blue-700 dark:text-blue-200 text-xs font-medium rounded-lg transition-colors border border-blue-100 dark:border-slate-600"
+                                    >
+                                        {sugg}
+                                    </button>
+                                ))}
+                            </div>
+                        )}
+                    </div>
+                ))}
+                
+                {isLoading && (
+                    <div className="flex justify-start gap-3">
+                         <div className="w-8 h-8 mt-1 rounded-full bg-cyan-100 dark:bg-slate-700 flex-shrink-0 flex items-center justify-center text-cyan-700 font-bold text-xs">AI</div>
+                        <div className="bg-white dark:bg-slate-700 rounded-2xl rounded-bl-none px-4 py-3 shadow-sm border border-gray-100 dark:border-slate-600">
+                            <div className="flex gap-1.5">
+                                <div className="w-2 h-2 bg-cyan-500 rounded-full animate-bounce" style={{animationDelay: '0ms'}}/>
+                                <div className="w-2 h-2 bg-cyan-500 rounded-full animate-bounce" style={{animationDelay: '150ms'}}/>
+                                <div className="w-2 h-2 bg-cyan-500 rounded-full animate-bounce" style={{animationDelay: '300ms'}}/>
+                            </div>
+                        </div>
                     </div>
                 )}
+                <div ref={messagesEndRef} />
             </div>
-            
-            <div className="relative">
-                <div className="bg-white dark:bg-slate-800 rounded-xl p-2 flex items-center shadow-lg">
-                    <input type="file" ref={fileInputRef} onChange={handleFileSelected} className="hidden" accept="image/*,application/pdf" />
-                    <button onClick={handleAttachmentClick} title="Прикрепить" className="p-2 text-slate-500 hover:text-blue-600">📎</button>
+
+            {/* Input Area */}
+            <div className="p-4 bg-white dark:bg-slate-800 border-t border-gray-200 dark:border-slate-700">
+                {/* Превью прикрепленного файла */}
+                {attachedFile && (
+                    <div className="mb-3 flex items-center gap-2 bg-blue-50 dark:bg-slate-700 p-2 rounded-lg w-fit border border-blue-100 dark:border-slate-600">
+                        <span className="text-xl">📄</span>
+                        <div className="text-xs">
+                            <p className="font-semibold text-slate-700 dark:text-white truncate max-w-[200px]">{attachedFile.name}</p>
+                            <p className="text-slate-500 dark:text-slate-400">{(attachedFile.size / 1024).toFixed(1)} KB</p>
+                        </div>
+                        <button onClick={() => setAttachedFile(null)} className="ml-2 text-slate-400 hover:text-red-500">✕</button>
+                    </div>
+                )}
+
+                <div className="flex gap-3 items-end bg-gray-50 dark:bg-slate-900 p-2 rounded-2xl border border-gray-200 dark:border-slate-700 focus-within:ring-2 focus-within:ring-blue-500/20 transition-all shadow-sm">
+                    <input type="file" ref={fileInputRef} onChange={handleFileSelect} className="hidden" accept="image/*,application/pdf" />
                     
-                    {/* МИКРОФОН УДАЛЕН ОТСЮДА */}
+                    <button 
+                        onClick={() => fileInputRef.current?.click()}
+                        className="p-3 text-slate-400 hover:text-blue-600 hover:bg-blue-50 dark:hover:bg-slate-800 rounded-xl transition-all"
+                        title="Прикрепить документ для анализа"
+                    >
+                        <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                            <path strokeLinecap="round" strokeLinejoin="round" d="M15.172 7l-6.586 6.586a2 2 0 102.828 2.828l6.414-6.586a4 4 0 00-5.656-5.656l-6.415 6.585a6 6 0 108.486 8.486L20.5 13" />
+                        </svg>
+                    </button>
                     
-                    <input type="text" value={input} onChange={(e) => setInput(e.target.value)} onKeyPress={(e) => e.key === 'Enter' && handleSend()} placeholder="Спросите Lumi..." className="flex-grow bg-transparent px-3 outline-none dark:text-white" disabled={isLoading} />
-                    <button onClick={() => handleSend()} disabled={isLoading || !input.trim()} className="bg-blue-600 text-white rounded-lg p-2">➤</button>
+                    <textarea
+                        value={input}
+                        onChange={(e) => setInput(e.target.value)}
+                        onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSend(); } }}
+                        placeholder={attachedFile ? "Опишите, что сделать с файлом..." : "Задайте вопрос или загрузите отчет..."}
+                        className="flex-1 bg-transparent border-0 focus:ring-0 p-3 max-h-32 resize-none text-slate-800 dark:text-slate-200 placeholder-slate-400 focus:outline-none text-sm"
+                        rows={1}
+                        disabled={isLoading}
+                        style={{minHeight: '44px'}}
+                    />
+                    
+                    <button 
+                        onClick={() => handleSend()} 
+                        disabled={isLoading || (!input.trim() && !attachedFile)}
+                        className="p-3 bg-blue-600 hover:bg-blue-700 disabled:bg-slate-300 disabled:cursor-not-allowed text-white rounded-xl transition-all shadow-md flex-shrink-0"
+                    >
+                        <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
+                            <path d="M10.894 2.553a1 1 0 00-1.788 0l-7 14a1 1 0 001.169 1.409l5-1.429A1 1 0 009 15.571V11a1 1 0 112 0v4.571a1 1 0 00.725.962l5 1.428a1 1 0 001.17-1.408l-7-14z" />
+                        </svg>
+                    </button>
                 </div>
+                <p className="text-center text-xs text-slate-400 mt-2">Lumi помогает анализировать данные, но решения за вами.</p>
             </div>
         </div>
     );
