@@ -60,9 +60,16 @@ const App: React.FC = () => {
     
     const nextStartTimeRef = useRef(0);
     const audioSourcesRef = useRef(new Set<AudioBufferSourceNode>());
+    
+    // Буферы для текущей фразы
     const userTranscriptRef = useRef('');
     const aiTranscriptRef = useRef('');
     
+    // --- ПАМЯТЬ АССИСТЕНТА ---
+    // Хранит историю диалога, чтобы при переподключении контекст не терялся
+    const historyRef = useRef<Array<{role: 'user' | 'ai', text: string}>>([]);
+
+    // Загрузка данных
     useEffect(() => {
         const loadData = async () => {
             setIsLoadingData(true);
@@ -133,7 +140,7 @@ const App: React.FC = () => {
     
     const navigate = useNavigate();
 
-    // --- ФУНКЦИЯ ОСТАНОВКИ (Anti-Crash) ---
+    // --- ФУНКЦИЯ ОСТАНОВКИ ---
     const stopEverything = useCallback(() => {
         if (scriptProcessorRef.current) {
             scriptProcessorRef.current.onaudioprocess = null;
@@ -165,11 +172,10 @@ const App: React.FC = () => {
 
     useEffect(() => { return () => stopEverything(); }, [stopEverything]);
 
-    // --- НОВЫЙ УМНЫЙ КОНТЕКСТ (Без создания записей) ---
+    // --- УМНЫЙ КОНТЕКСТ С ИСТОРИЕЙ ---
     const generateContext = (data: UserData) => {
         const today = new Date().toLocaleDateString('ru-RU');
         
-        // Оптимизируем данные для быстрого анализа
         const optimizedDb = {
             recent_reports: data.reports.slice(0, 6).map(r => ({ period: r.name, total_sales: r.metrics.sales, total_leads: r.metrics.leads })),
             active_proposals: data.proposals.slice(0, 15).map(p => ({ client: p.company, item: p.item, sum: p.amount, status: p.status })),
@@ -178,28 +184,36 @@ const App: React.FC = () => {
             company_info: data.companyProfile.details
         };
 
+        // Превращаем историю в текст для промпта
+        const conversationHistory = historyRef.current.slice(-6) // Берем последние 6 реплик
+            .map(h => `${h.role === 'user' ? 'ПОЛЬЗОВАТЕЛЬ' : 'LUMI'}: ${h.text}`)
+            .join('\n');
+
         return `
         SYSTEM_INSTRUCTION:
         DATE: ${today}
+        IDENTITY: Lumi, стратегический бизнес-партнер и эксперт компании KZ TRANSIT.
         
-        IDENTITY: 
-        Ты — Lumi (Люми), интеллектуальный голосовой бизнес-партнер компании KZ TRANSIT.
-        Твоя роль: Главный консультант, аналитик, помощник директора и команды.
+        YOUR ROLES:
+        1. Аналитик: Анализ продаж, финансов и маркетинга.
+        2. Маркетолог: Идеи для рекламы, тексты, стратегия.
+        3. Инженер: Консультации по РТИ и 3D-печати.
+        4. Ассистент: Переводы, расчеты, поиск фактов.
 
-        CORE TASKS:
-        1. Поиск информации: Если данных нет в базе, используй Google Search (курсы валют, новости, законы, технологии).
-        2. Анализ данных: Давай точные ответы по продажам, маркетингу и финансам на основе предоставленного JSON.
-        3. Креатив: Помогай формулировать письма, посты, слоганы. Переводи тексты.
-        4. Техническая поддержка: Консультируй по 3D-печати и РТИ.
+        RULES FOR INTERNET SEARCH ([googleSearch]):
+        - Ищи в интернете ТОЛЬКО если пользователь прямо просит или данных нет в базе.
+        - Если ответ есть в твоих знаниях или в базе данных - отвечай сразу.
 
-        VOICE RULES (CRITICAL):
-        1. КРАТКОСТЬ: Говори емко. Максимум 2-3 предложения за раз (до 500 символов), если не попросили подробный доклад.
-        2. СТИЛЬ: Живой, интересный, профессиональный. Без канцеляризмов и "воды".
-        3. ПОВЕДЕНИЕ: 
-           - Если пользователь говорит "Стоп" или перебивает — замолкай немедленно.
-           - Если не знаешь ответа — скажи "Сейчас найду в интернете" и ищи.
-           - Цифры произноси словами (5000 -> пять тысяч).
-        
+        VOICE RESPONSE RULES (STRICT):
+        1. ЯЗЫК: Русский.
+        2. ЦИФРЫ: Произноси СЛОВАМИ! ("5000" -> "пять тысяч", "1.5 млн" -> "полтора миллиона").
+        3. ВАЛЮТА: "KZT" читай как "тенге", "USD" как "долларов".
+        4. КРАТКОСТЬ: Ответ голосом до 500 символов. Без воды.
+        5. ПАМЯТЬ: Используй историю диалога ниже, чтобы понимать контекст ("это", "он", "предыдущий").
+
+        PREVIOUS_CONVERSATION_HISTORY (SESSION MEMORY):
+        ${conversationHistory || "Диалог только начался."}
+
         DATABASE: ${JSON.stringify(optimizedDb)}
         USER_NOTES: ${data.companyProfile.aiSystemInstruction}
         `;
@@ -227,7 +241,6 @@ const App: React.FC = () => {
             const ai = new GoogleGenAI({ apiKey: apiKey });
             const fullContext = generateContext(userData);
 
-            // ОСТАВЛЯЕМ ТОЛЬКО ПОИСК (Убираем создание и навигацию)
             const toolsArray: any[] = [
                 { googleSearch: {} }
             ];
@@ -256,11 +269,15 @@ const App: React.FC = () => {
                     responseModalities: [Modality.AUDIO],
                     speechConfig: { 
                         voiceConfig: { 
-                            prebuiltVoiceConfig: { voiceName: 'Aoede' } // Женский профессиональный голос
+                            prebuiltVoiceConfig: { voiceName: 'Aoede' }
                         } 
                     },
                     systemInstruction: fullContext,
                     tools: toolsArray,
+                    generationConfig: {
+                        temperature: 0.7,
+                        maxOutputTokens: 600 
+                    }
                 },
                 callbacks: {
                     onopen: () => {
@@ -282,8 +299,22 @@ const App: React.FC = () => {
                             setLiveUserTranscript(userTranscriptRef.current);
                         }
                         
-                        // Обработка завершения фразы
                         if (message.serverContent?.turnComplete) {
+                            // --- СОХРАНЕНИЕ ИСТОРИИ ---
+                            // Как только обмен репликами завершен, сохраняем его в ref
+                            const userText = userTranscriptRef.current.trim();
+                            const aiText = aiTranscriptRef.current.trim();
+                            
+                            if (userText && aiText) {
+                                historyRef.current.push({ role: 'user', text: userText });
+                                historyRef.current.push({ role: 'ai', text: aiText });
+                                
+                                // Ограничиваем историю последними 20 сообщениями, чтобы не раздувать память
+                                if (historyRef.current.length > 20) {
+                                    historyRef.current = historyRef.current.slice(-20);
+                                }
+                            }
+
                             userTranscriptRef.current = '';
                             aiTranscriptRef.current = '';
                             setTimeout(() => { 
@@ -295,7 +326,6 @@ const App: React.FC = () => {
                             }, 1500);
                         }
                         
-                        // Воспроизведение аудио
                         const modelTurn = message.serverContent?.modelTurn;
                         if (modelTurn?.parts) {
                             for (const part of modelTurn.parts) {
@@ -304,7 +334,7 @@ const App: React.FC = () => {
                                     const outCtx = outputAudioContextRef.current;
                                     const audioBuffer = await decodeAudioData(decode(base64Audio), outCtx, 24000, 1);
                                     const now = outCtx.currentTime;
-                                    if (nextStartTimeRef.current < now) nextStartTimeRef.current = now;
+                                    if (nextStartTimeRef.current < now) nextStartTimeRef.current = now + 0.05;
                                     const source = outCtx.createBufferSource();
                                     source.buffer = audioBuffer;
                                     source.connect(outCtx.destination);
@@ -316,8 +346,8 @@ const App: React.FC = () => {
                             }
                         }
                     },
-                    onclose: () => { if (isSessionActive) { isSessionActive = false; stopEverything(); } },
-                    onerror: () => { if (isSessionActive) { isSessionActive = false; stopEverything(); } }
+                    onclose: (e: any) => { if (isSessionActive) { isSessionActive = false; stopEverything(); } },
+                    onerror: (e: any) => { if (isSessionActive) { isSessionActive = false; stopEverything(); } }
                 }
             });
 
@@ -338,10 +368,10 @@ const App: React.FC = () => {
             processor.connect(inputContext.destination);
 
         } catch (err) {
-            console.error("Connection failed:", err);
+            console.error("Failed to connect:", err);
             isSessionActive = false;
             stopEverything();
-            alert("Ошибка подключения к Lumi.");
+            alert("Сбой подключения (возможно перегрузка токенов).");
         }
     };
 
