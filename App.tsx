@@ -23,8 +23,8 @@ import VoiceAssistantOverlay from './components/VoiceAssistantOverlay';
 import { initialUserData, mockUser } from './services/mockData';
 import { User, UserData } from './types';
 
-import { 
-  fetchFullUserData, 
+import {
+  fetchFullUserData,
   apiAddReport, apiUpdateReport, apiDeleteReport,
   apiAddProposal, apiUpdateProposal, apiDeleteProposal,
   apiAddCampaign, apiDeleteCampaign,
@@ -94,6 +94,9 @@ const App: React.FC = () => {
 
   // --- Утилита строгого лимита 400 символов ---
   const clamp400 = (s: string) => s.length > 400 ? s.slice(0, 397) + "…" : s;
+
+  // --- Стоп-детектор включаем с задержкой после старта сессии ---
+  const allowStopRef = useRef(false);
 
   // --- Загрузка данных ---
   useEffect(() => {
@@ -209,6 +212,7 @@ const App: React.FC = () => {
     setLiveAiTranscript('');
     userTranscriptRef.current = '';
     aiTranscriptRef.current = '';
+    allowStopRef.current = false;
   }, []);
 
   useEffect(() => { return () => stopEverything(); }, [stopEverything]);
@@ -318,8 +322,8 @@ ${data.companyProfile.aiSystemInstruction}
           responseModalities: [Modality.AUDIO, Modality.TEXT],
           speechConfig: {
             voiceConfig: {
-              // ✅ Более “ровный” голос для русского (можно менять)
-              prebuiltVoiceConfig: { voiceName: 'Kore' }
+              // ✅ Вернули гарантированно поддерживаемый голос
+              prebuiltVoiceConfig: { voiceName: 'Aoede' }
             }
           },
           systemInstruction: fullContext,
@@ -336,12 +340,9 @@ ${data.companyProfile.aiSystemInstruction}
             setIsConnecting(false);
             console.log("Lumi Connected");
 
-            // ✅ авто-приветствие
-            try {
-              sessionRef.current?.sendMessage({
-                text: "Привет! Я Lumi. Скажи, чем помочь."
-              } as any);
-            } catch (e) { }
+            // ✅ разрешаем стоп только через 1.5 секунды после старта
+            allowStopRef.current = false;
+            setTimeout(() => { allowStopRef.current = true; }, 1500);
           },
 
           onmessage: async (message: LiveServerMessage) => {
@@ -359,255 +360,4 @@ ${data.companyProfile.aiSystemInstruction}
               userTranscriptRef.current += chunk;
               setLiveUserTranscript(userTranscriptRef.current);
 
-              // ✅ Локальный стоп по ключевым словам
-              const normalized = userTranscriptRef.current.toLowerCase();
-              if (/\bстоп\b|\bостановись\b|\bхватит\b/.test(normalized)) {
-                stopEverything();
-                return;
-              }
-            }
-
-            // --- (B) Обработка modelTurn (TEXT + AUDIO + Function Calls) ---
-            const modelTurn = message.serverContent?.modelTurn;
-            if (modelTurn?.parts) {
-              for (const part of modelTurn.parts) {
-                // ✅ Текстовая часть модели
-                const text = (part as any).text;
-                if (text) {
-                  const t = clamp400(text);
-                  aiTranscriptRef.current += t;
-                  setLiveAiTranscript(clamp400(aiTranscriptRef.current));
-                }
-
-                // ✅ Вызовы функций (tools)
-                const functionCall = (part as any).functionCall;
-                if (functionCall?.name === "navigateToPage") {
-                  const page = functionCall.args?.page;
-                  if (page) {
-                    try { navigate(page); } catch (e) { }
-                  }
-                  // возвращаем модели результат выполнения
-                  try {
-                    sessionRef.current?.sendToolResponse({
-                      functionResponses: [{
-                        name: functionCall.name,
-                        response: { success: true, page }
-                      }]
-                    } as any);
-                  } catch (e) { }
-                }
-
-                // ✅ Аудио часть модели
-                const base64Audio = (part as any).inlineData?.data;
-                if (base64Audio && outputAudioContextRef.current) {
-                  const outCtx = outputAudioContextRef.current;
-                  const audioBuffer = await decodeAudioData(decode(base64Audio), outCtx, 24000, 1);
-                  const now = outCtx.currentTime;
-                  if (nextStartTimeRef.current < now) nextStartTimeRef.current = now + 0.05;
-
-                  const src = outCtx.createBufferSource();
-                  src.buffer = audioBuffer;
-                  src.connect(outCtx.destination);
-                  src.start(nextStartTimeRef.current);
-                  nextStartTimeRef.current += audioBuffer.duration;
-                  audioSourcesRef.current.add(src);
-                  src.onended = () => audioSourcesRef.current.delete(src);
-                }
-              }
-            }
-
-            // --- (C) Завершение хода: сохраняем историю ---
-            if (message.serverContent?.turnComplete) {
-              const userText = userTranscriptRef.current.trim();
-              const aiText = aiTranscriptRef.current.trim();
-
-              if (userText) historyRef.current.push({ role: 'user', text: userText });
-              if (aiText) historyRef.current.push({ role: 'ai', text: aiText });
-
-              if (historyRef.current.length > 20) {
-                historyRef.current = historyRef.current.slice(-20);
-              }
-
-              userTranscriptRef.current = '';
-              aiTranscriptRef.current = '';
-
-              setTimeout(() => {
-                if (isSessionActive) {
-                  setLiveUserTranscript('');
-                  setLiveAiTranscript('');
-                  setVoiceStatus('listening');
-                }
-              }, 1200);
-            }
-          },
-
-          onclose: () => { if (isSessionActive) { isSessionActive = false; stopEverything(); } },
-          onerror: () => { if (isSessionActive) { isSessionActive = false; stopEverything(); } }
-        }
-      });
-
-      const session = await sessionPromise;
-      if (!isSessionActive) { session.close(); stopEverything(); return; }
-      sessionRef.current = session;
-
-      // --- (D) Стрим микрофона в Gemini ---
-      processor.onaudioprocess = (event) => {
-        if (!isSessionActive || !sessionRef.current) return;
-        const inputData = event.inputBuffer.getChannelData(0);
-        const int16 = new Int16Array(inputData.length);
-        for (let i = 0; i < inputData.length; i++) { int16[i] = inputData[i] * 32768; }
-        const pcmBlob: Blob = { data: encode(new Uint8Array(int16.buffer)), mimeType: 'audio/pcm;rate=16000' };
-        try { sessionRef.current.sendRealtimeInput({ media: pcmBlob }); } catch (e) { }
-      };
-
-      source.connect(processor);
-      processor.connect(inputContext.destination);
-
-    } catch (err) {
-      console.error("Failed to connect:", err);
-      isSessionActive = false;
-      stopEverything();
-      alert("Сбой подключения (возможно перегрузка токенов).");
-    }
-  };
-
-  const handleToggleVoiceControl = () => {
-    if (isVoiceControlActive) stopEverything();
-    else connectToGemini();
-  };
-
-  if (isLoadingData) {
-    return (
-      <div className="flex h-screen items-center justify-center bg-gray-100">
-        <div className="text-center">
-          <Logo className="mx-auto h-14 w-auto" />
-          <div className="mt-4 text-slate-500">Загрузка...</div>
-        </div>
-      </div>
-    );
-  }
-
-  if (!currentUser) return <LoginPage onLogin={handleLogin} />;
-
-  return (
-    <div className="flex h-screen bg-gray-100 text-slate-800">
-      <Sidebar
-        isOpen={isSidebarOpen}
-        setOpen={setSidebarOpen}
-        companyProfile={userData.companyProfile}
-        setCompanyProfile={crudFunctions.setCompanyProfile}
-        onLogout={handleLogout}
-        isVoiceControlActive={isVoiceControlActive}
-        onToggleVoiceControl={handleToggleVoiceControl}
-      />
-
-      <div className="flex-1 flex flex-col overflow-hidden">
-        <main className="flex-1 overflow-x-hidden overflow-y-auto bg-gray-100 p-4 sm:p-6 lg:p-8 relative">
-          <button
-            onClick={() => setSidebarOpen(!isSidebarOpen)}
-            className="lg:hidden fixed top-4 left-4 z-20 p-2 bg-white/60 rounded-full shadow-md"
-          >
-            <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6" fill="none"
-              viewBox="0 0 24 24" stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
-                d="M4 6h16M4 12h16M4 18h16" />
-            </svg>
-          </button>
-
-          <Routes>
-            <Route path="/" element={<Navigate to="/dashboard" replace />} />
-            <Route path="/dashboard" element={<DashboardPage reports={userData.reports} proposals={userData.proposals} />} />
-
-            <Route path="/ai-assistant" element={
-              <AIAssistantPage
-                userData={userData}
-                addReport={crudFunctions.addReport}
-                addMultipleProposals={crudFunctions.addMultipleProposals}
-                addMultipleCampaigns={crudFunctions.addMultipleCampaigns}
-                addOtherReport={crudFunctions.addOtherReport}
-                updateOtherReport={crudFunctions.updateOtherReport}
-                addProposal={crudFunctions.addProposal}
-                updateProposal={crudFunctions.updateProposal}
-                isGlobalVoiceActive={isVoiceControlActive}
-                onDisableGlobalVoice={() => stopEverything()}
-              />
-            } />
-
-            <Route path="/reports" element={<ReportsPage
-              reports={userData.reports}
-              addReport={crudFunctions.addReport}
-              deleteReport={crudFunctions.deleteReport}
-              updateReport={crudFunctions.updateReport}
-            />} />
-
-            <Route path="/other-reports" element={<OtherReportsPage
-              reports={userData.otherReports}
-              addReport={crudFunctions.addOtherReport}
-              updateReport={crudFunctions.updateOtherReport}
-              deleteReport={crudFunctions.deleteOtherReport}
-            />} />
-
-            <Route path="/proposals" element={<CommercialProposalsPage
-              proposals={userData.proposals}
-              addProposal={crudFunctions.addProposal}
-              deleteProposal={crudFunctions.deleteProposal}
-              setProposals={crudFunctions.setProposals}
-              updateProposal={crudFunctions.updateProposal}
-            />} />
-
-            <Route path="/compare" element={<ComparePeriodsPage reports={userData.reports} />} />
-            <Route path="/conversions" element={<ConversionsPage reports={userData.reports} />} />
-            <Route path="/net-conversions" element={<NetConversionsPage reports={userData.reports} updateReport={crudFunctions.updateReport} />} />
-
-            <Route path="/campaigns" element={<AdCampaignsPage
-              campaigns={userData.campaigns}
-              addCampaign={crudFunctions.addCampaign}
-              deleteCampaign={crudFunctions.deleteCampaign}
-              setCampaigns={crudFunctions.setCampaigns}
-            />} />
-
-            <Route path="/unit-economics" element={<UnitEconomicsPage proposals={userData.proposals} reports={userData.reports} />} />
-
-            <Route path="/storage" element={<CloudStoragePage
-              links={userData.links}
-              files={userData.files}
-              addLink={crudFunctions.addLink}
-              deleteLink={crudFunctions.deleteLink}
-              addFile={crudFunctions.addFile}
-              deleteFile={crudFunctions.deleteFile}
-            />} />
-
-            <Route path="/payments" element={<PaymentsPage
-              payments={userData.payments}
-              files={userData.files}
-              addPayment={crudFunctions.addPayment}
-              updatePayment={crudFunctions.updatePayment}
-              deletePayment={crudFunctions.deletePayment}
-              addFile={crudFunctions.addFile}
-            />} />
-
-            <Route path="/settings" element={<SettingsPage
-              fullUserData={userData}
-              setAllUserData={crudFunctions.setAllUserData}
-              setCompanyProfile={crudFunctions.setCompanyProfile}
-            />} />
-
-            <Route path="*" element={<Navigate to="/dashboard" replace />} />
-          </Routes>
-        </main>
-      </div>
-
-      {isVoiceControlActive && (
-        <VoiceAssistantOverlay
-          status={voiceStatus}
-          userTranscript={liveUserTranscript}
-          aiTranscript={liveAiTranscript}
-          onClose={handleToggleVoiceControl}
-        />
-      )}
-    </div>
-  );
-};
-
-const AppWithRouter: React.FC = () => (<HashRouter><App /></HashRouter>);
-export default AppWithRouter;
+              const normalized = userTranscriptRef.current.toLowerCase().trim();
