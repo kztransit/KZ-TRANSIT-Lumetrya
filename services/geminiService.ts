@@ -94,12 +94,31 @@ const getSafeText = (response: any): string => {
     return response?.candidates?.[0]?.content?.parts?.[0]?.text || "";
 };
 
+const assistantSystemInstruction = `
+Ты — Lumi, быстрый и дружелюбный ассистент. Твои ответы краткие, но живые и полезные: не более 5-7 предложений, структурируй текст пунктами, если это ускоряет чтение. Всегда предлагай следующий шаг или варианты решения.
+
+Ключевые навыки:
+- Помогаешь с продажами: формируешь офферы, УТП, письма, скрипты, рекламные тексты и идеи.
+- Умеешь делать расчеты (маркетинг, unit economics, воронка), приводишь формулы и итоговые числа.
+- Анализируешь загруженные данные и контекст пользователя, быстро находишь нужные значения.
+- Сохраняешь и используешь историю диалога: опирайся на предыдущее общение и новые данные в каждом ответе.
+
+Интернет-поиск:
+- Используй googleSearch, если не хватает актуальных фактов или нужна свежая информация. Всегда кратко излагай найденное и указывай, что искал.
+
+Тон общения: дружелюбный, деловой, проактивный; избегай «воду», отвечай по делу.`;
+
+const buildAssistantInstruction = (systemInstruction: string, userData: UserData): string => {
+    const serializedUserData = JSON.stringify(userData || {});
+    return `${assistantSystemInstruction}\n\nБизнес-контекст пользователя (делись коротко в ответах): ${systemInstruction}\n\nДанные системы для анализа: ${serializedUserData}`;
+};
+
 // --- АНАЛИЗ ФАЙЛОВ И ДАННЫХ ---
 
 export const analyzeReportImage = async (mimeType: string, base64Data: string): Promise<string> => {
     const apiKey = import.meta.env.VITE_GOOGLE_API_KEY;
     if (!apiKey) throw new Error("API Key not found");
-    
+
     const client = new GoogleGenAI({ apiKey });
 
     // УСИЛЕННЫЙ ПРОМПТ: Четко различаем деньги (sales) и количество (deals)
@@ -107,14 +126,14 @@ export const analyzeReportImage = async (mimeType: string, base64Data: string): 
         model: "models/gemini-2.0-flash-exp",
         config: {
             systemInstruction: `Ты — аналитик данных. Извлеки цифры из скриншота отчета.
-            
+
             ВАЖНО ПРО "sales" (Выручка):
             - Ищи колонки "Сумма", "Выручка", "Оборот", "Revenue", "Total".
             - ЭТО ДОЛЖНЫ БЫТЬ ДЕНЬГИ (например: 372289 или 5 000 000), А НЕ КОЛИЧЕСТВО (например: 3 или 21).
             - Если видишь две колонки "Продажи" (шт) и "Продажи" (деньги) — в поле 'sales' пиши ДЕНЬГИ.
-            
+
             Верни JSON объект строго с ключами "РТИ" и "3D".
-            Внутри каждого ключа: 
+            Внутри каждого ключа:
             - budget (бюджет)
             - clicks (клики)
             - leads (лиды)
@@ -152,7 +171,7 @@ export const analyzeProposalsImage = async (mimeType: string, base64Data: string
         },
         contents: [{ role: "user", parts: [{ inlineData: { mimeType, data: base64Data } }, { text: "Список КП" }] }]
     });
-    
+
     return JSON.parse(cleanJson(getSafeText(response)));
 };
 
@@ -205,7 +224,7 @@ export const analyzeDataConsistency = async (reports: any[]): Promise<string> =>
     const apiKey = import.meta.env.VITE_GOOGLE_API_KEY;
     if (!apiKey) throw new Error("API Key not found");
     const client = new GoogleGenAI({ apiKey });
-    
+
     try {
         const response = await client.models.generateContent({
             model: "models/gemini-2.0-flash-exp",
@@ -221,20 +240,20 @@ export const analyzeDataConsistency = async (reports: any[]): Promise<string> =>
 
 // --- ГЛАВНАЯ ФУНКЦИЯ ТЕКСТОВОГО ЧАТА ---
 export const getAIAssistantResponse = async (
-    prompt: string, 
-    userData: UserData, 
+    prompt: string,
+    userData: UserData,
     systemInstruction: string,
     fileData?: { mimeType: string, base64: string }, // Опциональный файл
     history: Array<{ role: string, parts: any[] }> = [] // Поддержка истории
 ) => {
     const apiKey = import.meta.env.VITE_GOOGLE_API_KEY;
     if (!apiKey) throw new Error("API Key not found");
-    
+
     const client = new GoogleGenAI({ apiKey });
-    
+
     try {
         const currentParts: any[] = [];
-        
+
         if (fileData) {
             currentParts.push({
                 inlineData: {
@@ -243,7 +262,7 @@ export const getAIAssistantResponse = async (
                 }
             });
         }
-        
+
         currentParts.push({ text: prompt });
 
         // Формируем историю для контекста
@@ -252,12 +271,14 @@ export const getAIAssistantResponse = async (
             { role: "user", parts: currentParts }
         ];
 
+        const combinedSystemInstruction = buildAssistantInstruction(systemInstruction, userData);
+
         const response = await client.models.generateContent({
             model: "models/gemini-2.0-flash-exp",
             config: {
-                systemInstruction: { parts: [{ text: systemInstruction }] },
+                systemInstruction: { parts: [{ text: combinedSystemInstruction }] },
                 // Подключаем поиск в интернете
-                tools: [{ googleSearch: {} }], 
+                tools: [{ googleSearch: {} }],
                 generationConfig: {
                     maxOutputTokens: 4000, // Больше токенов для длинных ответов (письма, статьи)
                     temperature: 0.7 // Интересный собеседник
@@ -269,7 +290,7 @@ export const getAIAssistantResponse = async (
         const text = getSafeText(response);
         if (!text) return { text: "Нет ответа от сервиса.", functionCall: null };
         return { text: text, functionCall: null };
-        
+
     } catch (error: any) {
         console.error("GEMINI ERROR:", error);
         return { text: "Произошла ошибка при обращении к ИИ.", functionCall: null };
