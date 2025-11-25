@@ -60,6 +60,7 @@ const AIAssistantPage: React.FC<AIAssistantPageProps> = ({ userData }) => {
     const [input, setInput] = useState('');
     const [isLoading, setIsLoading] = useState(false);
     const [attachedFile, setAttachedFile] = useState<File | null>(null);
+    const [showBetaNotice, setShowBetaNotice] = useState(true); // Состояние для уведомления
     
     const messagesEndRef = useRef<HTMLDivElement>(null);
     const fileInputRef = useRef<HTMLInputElement>(null);
@@ -76,7 +77,7 @@ const AIAssistantPage: React.FC<AIAssistantPageProps> = ({ userData }) => {
             sender: 'user' 
         };
         setMessages(prev => [...prev, userMsg]);
-        const currentInput = input; // Сохраняем для промпта
+        const currentInput = input; 
         setInput('');
         setIsLoading(true);
 
@@ -87,7 +88,6 @@ const AIAssistantPage: React.FC<AIAssistantPageProps> = ({ userData }) => {
                 fileData = { mimeType: attachedFile.type, base64 };
             }
 
-            // Если есть файл, но нет текста, добавляем дефолтный промпт
             const prompt = currentInput || (attachedFile ? "Проанализируй этот документ. Опиши суть, ключевые моменты и дай рекомендации." : "");
             const context = generateContext(userData);
             
@@ -115,10 +115,10 @@ const AIAssistantPage: React.FC<AIAssistantPageProps> = ({ userData }) => {
     };
 
     return (
-        <div className="flex flex-col h-[calc(100vh-100px)] max-w-5xl mx-auto w-full bg-white dark:bg-slate-800 rounded-2xl shadow-sm overflow-hidden border border-gray-200 dark:border-slate-700">
+        <div className="flex flex-col h-[calc(100vh-100px)] max-w-5xl mx-auto w-full bg-white dark:bg-slate-800 rounded-2xl shadow-sm overflow-hidden border border-gray-200 dark:border-slate-700 relative">
             
             {/* Header */}
-            <div className="px-6 py-4 border-b bg-white dark:bg-slate-800 flex items-center gap-3">
+            <div className="px-6 py-4 border-b bg-white dark:bg-slate-800 flex items-center gap-3 z-10 relative">
                 <div className="w-9 h-9 rounded-full bg-blue-600 flex items-center justify-center text-white font-bold shadow-sm">
                     L
                 </div>
@@ -127,6 +127,32 @@ const AIAssistantPage: React.FC<AIAssistantPageProps> = ({ userData }) => {
                     <p className="text-xs text-slate-500 dark:text-slate-400">Бизнес-ассистент</p>
                 </div>
             </div>
+
+            {/* BETA NOTICE (Уведомление) */}
+            {showBetaNotice && (
+                <div className="bg-blue-50 dark:bg-slate-700/50 border-b border-blue-100 dark:border-slate-600 px-6 py-3 flex items-start justify-between gap-4 animate-fade-in">
+                    <div className="flex items-start gap-3">
+                        <div className="mt-0.5 text-blue-500 dark:text-blue-300">
+                            <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
+                                <path fillRule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7-4a1 1 0 11-2 0 1 1 0 012 0zM9 9a1 1 0 000 2v3a1 1 0 001 1h1a1 1 0 100-2v-3a1 1 0 00-1-1H9z" clipRule="evenodd" />
+                            </svg>
+                        </div>
+                        <div>
+                            <p className="text-sm text-slate-700 dark:text-slate-200 font-medium">Lumi находится в стадии активной разработки 🚀</p>
+                            <p className="text-xs text-slate-500 dark:text-slate-400 mt-1 leading-relaxed">
+                                Сейчас я изучаю данные вашей компании, поэтому могу знать не всё. Полная интеграция скоро будет завершена. 
+                                <br className="hidden sm:block"/>
+                                Кстати, вы уже можете попробовать <b>Голосовой режим</b> — просто включите переключатель в боковом меню слева!
+                            </p>
+                        </div>
+                    </div>
+                    <button onClick={() => setShowBetaNotice(false)} className="text-slate-400 hover:text-slate-600 dark:hover:text-white transition-colors">
+                        <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" viewBox="0 0 20 20" fill="currentColor">
+                            <path fillRule="evenodd" d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z" clipRule="evenodd" />
+                        </svg>
+                    </button>
+                </div>
+            )}
 
             {/* Chat Area */}
             <div className="flex-1 overflow-y-auto p-6 space-y-6 bg-gray-50/50 dark:bg-slate-900/50">
