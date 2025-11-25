@@ -21,7 +21,7 @@ import AIAssistantPage from './pages/AIAssistantPage';
 import OtherReportsPage from './pages/OtherReportsPage';
 import VoiceAssistantOverlay from './components/VoiceAssistantOverlay';
 import { initialUserData, mockUser } from './services/mockData';
-import { User, UserData, Report, CommercialProposal, AdCampaign, Link, StoredFile, CompanyProfile, Payment, OtherReport } from './types';
+import { User, UserData } from './types';
 
 import { 
   fetchFullUserData, 
@@ -60,14 +60,11 @@ const App: React.FC = () => {
     
     const nextStartTimeRef = useRef(0);
     const audioSourcesRef = useRef(new Set<AudioBufferSourceNode>());
-    
-    // Буферы для текущей фразы
     const userTranscriptRef = useRef('');
     const aiTranscriptRef = useRef('');
     
-    // --- ПАМЯТЬ АССИСТЕНТА ---
-    // Хранит историю диалога, чтобы при переподключении контекст не терялся
-    const historyRef = useRef<Array<{role: 'user' | 'ai', text: string}>>([]);
+    // ИСТОРИЯ (Краткосрочная память для контекста при переподключении)
+    const shortTermMemoryRef = useRef<string>("");
 
     // Загрузка данных
     useEffect(() => {
@@ -76,12 +73,8 @@ const App: React.FC = () => {
             try {
                 const data = await fetchFullUserData();
                 setUserData(data);
-                console.log("Lumi: Данные успешно загружены.");
-            } catch (error) {
-                console.error("Ошибка загрузки:", error);
-            } finally {
-                setIsLoadingData(false);
-            }
+            } catch (error) { console.error("Ошибка загрузки:", error); } 
+            finally { setIsLoadingData(false); }
         };
         loadData();
     }, []);
@@ -161,10 +154,8 @@ const App: React.FC = () => {
             try { sessionRef.current.close(); } catch (e) {}
             sessionRef.current = null;
         }
-        
         audioSourcesRef.current.forEach(source => { try { source.stop(); } catch(e){} });
         audioSourcesRef.current.clear();
-        
         setIsVoiceControlActive(false);
         setIsConnecting(false);
         setVoiceStatus('idle');
@@ -172,50 +163,48 @@ const App: React.FC = () => {
 
     useEffect(() => { return () => stopEverything(); }, [stopEverything]);
 
-    // --- УМНЫЙ КОНТЕКСТ С ИСТОРИЕЙ ---
+    // --- МОЩНЫЙ СИСТЕМНЫЙ ПРОМПТ ---
     const generateContext = (data: UserData) => {
         const today = new Date().toLocaleDateString('ru-RU');
         
-        const optimizedDb = {
-            recent_reports: data.reports.slice(0, 6).map(r => ({ period: r.name, total_sales: r.metrics.sales, total_leads: r.metrics.leads })),
-            active_proposals: data.proposals.slice(0, 15).map(p => ({ client: p.company, item: p.item, sum: p.amount, status: p.status })),
-            recent_campaigns: data.campaigns.slice(0, 10),
-            payments: data.payments.slice(0, 10),
-            company_info: data.companyProfile.details
+        // Максимально подробно раскрываем данные, чтобы ИИ их видел
+        const dbContext = {
+            REPORTS_SUMMARY: data.reports.map(r => `${r.name}: Продажи ${r.metrics.sales}, Лиды ${r.metrics.leads}`).join('; '),
+            ACTIVE_DEALS: data.proposals.filter(p => p.status !== 'Оплачен').map(p => `${p.company} (${p.amount} KZT)`).join('; '),
+            ADS_STATUS: data.campaigns.map(c => `${c.name} (${c.status})`).join('; '),
+            COMPANY_DETAILS: data.companyProfile.details,
+            PAYMENTS: data.payments.map(p => `${p.serviceName}: ${p.amount}`).join('; ')
         };
 
-        // Превращаем историю в текст для промпта
-        const conversationHistory = historyRef.current.slice(-6) // Берем последние 6 реплик
-            .map(h => `${h.role === 'user' ? 'ПОЛЬЗОВАТЕЛЬ' : 'LUMI'}: ${h.text}`)
-            .join('\n');
-
         return `
-        SYSTEM_INSTRUCTION:
         DATE: ${today}
-        IDENTITY: Lumi, стратегический бизнес-партнер и эксперт компании KZ TRANSIT.
+        ROLE: Ты — Lumi, главный операционный директор и "второй мозг" компании KZ TRANSIT.
         
-        YOUR ROLES:
-        1. Аналитик: Анализ продаж, финансов и маркетинга.
-        2. Маркетолог: Идеи для рекламы, тексты, стратегия.
-        3. Инженер: Консультации по РТИ и 3D-печати.
-        4. Ассистент: Переводы, расчеты, поиск фактов.
+        ТВОЯ БАЗА ДАННЫХ (ЭТО ТВОИ ГЛАЗА, ИСПОЛЬЗУЙ ИХ):
+        ${JSON.stringify(dbContext)}
 
-        RULES FOR INTERNET SEARCH ([googleSearch]):
-        - Ищи в интернете ТОЛЬКО если пользователь прямо просит или данных нет в базе.
-        - Если ответ есть в твоих знаниях или в базе данных - отвечай сразу.
+        ИНСТРУКЦИИ ПОВЕДЕНИЯ (СТРОГО):
+        1. ТЫ ВИДИШЬ ДАННЫЕ. Если спросят "какая выручка", смотри в REPORTS_SUMMARY и отвечай цифрой. Не говори "я не знаю" или "дайте мне данные". Они уже у тебя есть.
+        2. ПОИСК В ИНТЕРНЕТЕ ([googleSearch]):
+           - Если вопрос касается фактов из мира (курс доллара, погода, законы, новости, характеристики материала) -> СРАЗУ ИСПОЛЬЗУЙ ПОИСК.
+           - Не спрашивай разрешения. Просто ищи и отвечай.
+        3. СТИЛЬ ОБЩЕНИЯ:
+           - Говори как эксперт. Уверенно, четко, без воды.
+           - Не используй фразы "как языковая модель". Ты — сотрудник компании.
+           - Если слышишь "Стоп" или тебя перебивают — замолкай.
+        4. ЗАДАЧИ:
+           - Помогай с переводами, текстами писем, расчетами.
+           - Давай технические советы по 3D и РТИ.
+           - Анализируй продажи.
+        5. ФОРМАТ РЕЧИ:
+           - Цифры говори словами: "5 миллионов тенге".
+           - Ответы держи в пределах 30-40 секунд речи (коротко и емко).
 
-        VOICE RESPONSE RULES (STRICT):
-        1. ЯЗЫК: Русский.
-        2. ЦИФРЫ: Произноси СЛОВАМИ! ("5000" -> "пять тысяч", "1.5 млн" -> "полтора миллиона").
-        3. ВАЛЮТА: "KZT" читай как "тенге", "USD" как "долларов".
-        4. КРАТКОСТЬ: Ответ голосом до 500 символов. Без воды.
-        5. ПАМЯТЬ: Используй историю диалога ниже, чтобы понимать контекст ("это", "он", "предыдущий").
+        ПРЕДЫДУЩИЙ КОНТЕКСТ (ЕСЛИ БЫЛ):
+        ${shortTermMemoryRef.current}
 
-        PREVIOUS_CONVERSATION_HISTORY (SESSION MEMORY):
-        ${conversationHistory || "Диалог только начался."}
-
-        DATABASE: ${JSON.stringify(optimizedDb)}
-        USER_NOTES: ${data.companyProfile.aiSystemInstruction}
+        ДОП. ИНСТРУКЦИИ ОТ ДИРЕКТОРА:
+        ${data.companyProfile.aiSystemInstruction}
         `;
     };
 
@@ -241,6 +230,7 @@ const App: React.FC = () => {
             const ai = new GoogleGenAI({ apiKey: apiKey });
             const fullContext = generateContext(userData);
 
+            // Инструмент поиска
             const toolsArray: any[] = [
                 { googleSearch: {} }
             ];
@@ -268,15 +258,13 @@ const App: React.FC = () => {
                 config: {
                     responseModalities: [Modality.AUDIO],
                     speechConfig: { 
-                        voiceConfig: { 
-                            prebuiltVoiceConfig: { voiceName: 'Aoede' }
-                        } 
+                        voiceConfig: { prebuiltVoiceConfig: { voiceName: 'Aoede' } } 
                     },
                     systemInstruction: fullContext,
                     tools: toolsArray,
                     generationConfig: {
                         temperature: 0.7,
-                        maxOutputTokens: 600 
+                        maxOutputTokens: 800 // Чуть больше для развернутых ответов, но без фанатизма
                     }
                 },
                 callbacks: {
@@ -300,21 +288,9 @@ const App: React.FC = () => {
                         }
                         
                         if (message.serverContent?.turnComplete) {
-                            // --- СОХРАНЕНИЕ ИСТОРИИ ---
-                            // Как только обмен репликами завершен, сохраняем его в ref
-                            const userText = userTranscriptRef.current.trim();
-                            const aiText = aiTranscriptRef.current.trim();
+                            // Сохраняем контекст для следующего подключения (если вдруг сбой)
+                            shortTermMemoryRef.current = `User: ${userTranscriptRef.current}. AI: ${aiTranscriptRef.current}.`;
                             
-                            if (userText && aiText) {
-                                historyRef.current.push({ role: 'user', text: userText });
-                                historyRef.current.push({ role: 'ai', text: aiText });
-                                
-                                // Ограничиваем историю последними 20 сообщениями, чтобы не раздувать память
-                                if (historyRef.current.length > 20) {
-                                    historyRef.current = historyRef.current.slice(-20);
-                                }
-                            }
-
                             userTranscriptRef.current = '';
                             aiTranscriptRef.current = '';
                             setTimeout(() => { 
@@ -323,7 +299,7 @@ const App: React.FC = () => {
                                     setLiveAiTranscript(''); 
                                     setVoiceStatus('listening'); 
                                 }
-                            }, 1500);
+                            }, 1000);
                         }
                         
                         const modelTurn = message.serverContent?.modelTurn;
@@ -333,12 +309,16 @@ const App: React.FC = () => {
                                 if (base64Audio && outputAudioContextRef.current) {
                                     const outCtx = outputAudioContextRef.current;
                                     const audioBuffer = await decodeAudioData(decode(base64Audio), outCtx, 24000, 1);
+                                    
+                                    // Буферизация 50мс для плавности
                                     const now = outCtx.currentTime;
                                     if (nextStartTimeRef.current < now) nextStartTimeRef.current = now + 0.05;
+                                    
                                     const source = outCtx.createBufferSource();
                                     source.buffer = audioBuffer;
                                     source.connect(outCtx.destination);
                                     source.start(nextStartTimeRef.current);
+                                    
                                     nextStartTimeRef.current += audioBuffer.duration;
                                     audioSourcesRef.current.add(source);
                                     source.onended = () => audioSourcesRef.current.delete(source);
@@ -368,10 +348,10 @@ const App: React.FC = () => {
             processor.connect(inputContext.destination);
 
         } catch (err) {
-            console.error("Failed to connect:", err);
+            console.error("Connection failed:", err);
             isSessionActive = false;
             stopEverything();
-            alert("Сбой подключения (возможно перегрузка токенов).");
+            alert("Ошибка голосового сервера.");
         }
     };
 
