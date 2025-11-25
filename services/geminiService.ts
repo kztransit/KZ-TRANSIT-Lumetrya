@@ -94,7 +94,7 @@ const getSafeText = (response: any): string => {
     return response?.candidates?.[0]?.content?.parts?.[0]?.text || "";
 };
 
-// --- АНАЛИЗ ФАЙЛОВ И ДАННЫХ (Для страниц импорта) ---
+// --- АНАЛИЗ ФАЙЛОВ И ДАННЫХ ---
 
 export const analyzeReportImage = async (mimeType: string, base64Data: string): Promise<string> => {
     const apiKey = import.meta.env.VITE_GOOGLE_API_KEY;
@@ -102,7 +102,7 @@ export const analyzeReportImage = async (mimeType: string, base64Data: string): 
     
     const client = new GoogleGenAI({ apiKey });
 
-    // ИСПОЛЬЗУЕМ УСИЛЕННЫЙ ПРОМПТ ДЛЯ ДЕНЕГ
+    // УСИЛЕННЫЙ ПРОМПТ: Четко различаем деньги (sales) и количество (deals)
     const response = await client.models.generateContent({
         model: "models/gemini-2.0-flash-exp",
         config: {
@@ -130,7 +130,7 @@ export const analyzeReportImage = async (mimeType: string, base64Data: string): 
                 role: "user",
                 parts: [
                     { inlineData: { mimeType, data: base64Data } },
-                    { text: "Извлеки данные из этого отчета. Внимание на поле sales - это деньги." }
+                    { text: "Извлеки данные из этого отчета." }
                 ]
             }
         ]
@@ -184,6 +184,23 @@ export const analyzePaymentInvoice = async (mimeType: string, base64Data: string
     return JSON.parse(cleanJson(getSafeText(response)));
 };
 
+// Функция для произвольного анализа документа (без JSON формата)
+export const analyzeGeneralDocument = async (mimeType: string, base64Data: string, prompt: string = "Проанализируй этот документ"): Promise<string> => {
+    const apiKey = import.meta.env.VITE_GOOGLE_API_KEY;
+    if (!apiKey) throw new Error("API Key not found");
+    const client = new GoogleGenAI({ apiKey });
+
+    const response = await client.models.generateContent({
+        model: "models/gemini-2.0-flash-exp",
+        config: {
+            // Инструкция на чистый текст и анализ
+            systemInstruction: "Ты — профессиональный ассистент. Проанализируй документ. Отвечай на русском. Не используй Markdown символы. Будь краток и полезен."
+        },
+        contents: [{ role: "user", parts: [{ inlineData: { mimeType, data: base64Data } }, { text: prompt }] }]
+    });
+    return getSafeText(response);
+};
+
 export const analyzeDataConsistency = async (reports: any[]): Promise<string> => {
     const apiKey = import.meta.env.VITE_GOOGLE_API_KEY;
     if (!apiKey) throw new Error("API Key not found");
@@ -208,7 +225,7 @@ export const getAIAssistantResponse = async (
     userData: UserData, 
     systemInstruction: string,
     fileData?: { mimeType: string, base64: string }, // Опциональный файл
-    history: Array<{ role: string, parts: any[] }> = [] // Добавлена поддержка истории чата!
+    history: Array<{ role: string, parts: any[] }> = [] // Поддержка истории
 ) => {
     const apiKey = import.meta.env.VITE_GOOGLE_API_KEY;
     if (!apiKey) throw new Error("API Key not found");
@@ -216,7 +233,6 @@ export const getAIAssistantResponse = async (
     const client = new GoogleGenAI({ apiKey });
     
     try {
-        // Собираем текущий запрос (текст + возможный файл)
         const currentParts: any[] = [];
         
         if (fileData) {
@@ -230,10 +246,9 @@ export const getAIAssistantResponse = async (
         
         currentParts.push({ text: prompt });
 
-        // Формируем полный контент запроса с учетом истории
-        // Мы берем историю (если есть) и добавляем в конец текущее сообщение
+        // Формируем историю для контекста
         const contents = [
-            ...history, 
+            ...history,
             { role: "user", parts: currentParts }
         ];
 
@@ -241,17 +256,18 @@ export const getAIAssistantResponse = async (
             model: "models/gemini-2.0-flash-exp",
             config: {
                 systemInstruction: { parts: [{ text: systemInstruction }] },
-                tools: [{ googleSearch: {} }], // Поиск в интернете
+                // Подключаем поиск в интернете
+                tools: [{ googleSearch: {} }], 
                 generationConfig: {
-                    maxOutputTokens: 4000, // Увеличили для длинных текстов (статьи, письма)
-                    temperature: 0.7 // Оптимально для "интересного собеседника" и креатива
+                    maxOutputTokens: 4000, // Больше токенов для длинных ответов (письма, статьи)
+                    temperature: 0.7 // Интересный собеседник
                 }
             },
             contents: contents
         });
 
         const text = getSafeText(response);
-        if (!text) return { text: "Извините, не удалось получить ответ от сервиса.", functionCall: null };
+        if (!text) return { text: "Нет ответа от сервиса.", functionCall: null };
         return { text: text, functionCall: null };
         
     } catch (error: any) {
