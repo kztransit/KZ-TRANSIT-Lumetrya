@@ -21,7 +21,7 @@ import AIAssistantPage from './pages/AIAssistantPage';
 import OtherReportsPage from './pages/OtherReportsPage';
 import VoiceAssistantOverlay from './components/VoiceAssistantOverlay';
 import { initialUserData, mockUser } from './services/mockData';
-import { User, UserData } from './types';
+import { User, UserData, Report, CommercialProposal, AdCampaign, Link, StoredFile, CompanyProfile, Payment, OtherReport } from './types';
 
 import { 
   fetchFullUserData, 
@@ -37,70 +37,20 @@ import {
 
 import Logo from './components/Logo';
 
-// --- ИНСТРУМЕНТЫ ---
-const navigationTool = {
-    name: "navigateToPage",
-    description: "Переходит на указанную страницу.",
-    parameters: {
-        type: "OBJECT",
-        properties: { page: { type: "STRING" } },
-        required: ["page"],
-    },
-};
-
-const createProposalTool = {
-    name: "createCommercialProposal",
-    description: "Создает КП.",
-    parameters: {
-        type: "OBJECT",
-        properties: {
-            company: { type: "STRING" },
-            item: { type: "STRING" },
-            amount: { type: "NUMBER" },
-            direction: { type: "STRING" },
-        },
-        required: ["company", "item", "amount"],
-    },
-};
-
-const addMarketingIdeaTool = {
-    name: "addMarketingIdea",
-    description: "Сохраняет идею.",
-    parameters: {
-        type: "OBJECT",
-        properties: {
-            name: { type: "STRING" },
-            budget: { type: "NUMBER" },
-        },
-        required: ["name"],
-    },
-};
-
-const calculateMarginTool = {
-    name: "calculateMargin",
-    description: "Считает маржу.",
-    parameters: {
-        type: "OBJECT",
-        properties: {
-            costPrice: { type: "NUMBER" },
-            salePrice: { type: "NUMBER" },
-        },
-        required: ["costPrice", "salePrice"],
-    },
-};
-
 const App: React.FC = () => {
     const [userData, setUserData] = useState<UserData>(initialUserData);
     const [isLoadingData, setIsLoadingData] = useState(true);
     const [currentUser, setCurrentUser] = useState<User | null>(null);
     const [isSidebarOpen, setSidebarOpen] = useState<boolean>(true);
     
+    // Состояния голосового ассистента
     const [isVoiceControlActive, setIsVoiceControlActive] = useState(false);
     const [isConnecting, setIsConnecting] = useState(false);
     const [voiceStatus, setVoiceStatus] = useState<'idle' | 'greeting' | 'listening' | 'speaking'>('idle');
     const [liveUserTranscript, setLiveUserTranscript] = useState('');
     const [liveAiTranscript, setLiveAiTranscript] = useState('');
 
+    // Refs
     const sessionRef = useRef<LiveSession | null>(null);
     const inputAudioContextRef = useRef<AudioContext | null>(null);
     const outputAudioContextRef = useRef<AudioContext | null>(null);
@@ -119,13 +69,19 @@ const App: React.FC = () => {
             try {
                 const data = await fetchFullUserData();
                 setUserData(data);
-            } catch (error) { console.error(error); } 
-            finally { setIsLoadingData(false); }
+                console.log("Lumi: Данные успешно загружены.");
+            } catch (error) {
+                console.error("Ошибка загрузки:", error);
+            } finally {
+                setIsLoadingData(false);
+            }
         };
         loadData();
     }, []);
 
-    useEffect(() => { document.documentElement.classList.remove('dark'); }, [userData.companyProfile.darkModeEnabled]);
+    useEffect(() => {
+        document.documentElement.classList.remove('dark');
+    }, [userData.companyProfile.darkModeEnabled]);
 
     useEffect(() => {
         const rememberedUserJSON = localStorage.getItem('rememberedUser');
@@ -176,8 +132,8 @@ const App: React.FC = () => {
     }), []);
     
     const navigate = useNavigate();
-    const handleNavigation = (page: string) => { navigate(page); };
 
+    // --- ФУНКЦИЯ ОСТАНОВКИ (Anti-Crash) ---
     const stopEverything = useCallback(() => {
         if (scriptProcessorRef.current) {
             scriptProcessorRef.current.onaudioprocess = null;
@@ -198,8 +154,10 @@ const App: React.FC = () => {
             try { sessionRef.current.close(); } catch (e) {}
             sessionRef.current = null;
         }
+        
         audioSourcesRef.current.forEach(source => { try { source.stop(); } catch(e){} });
         audioSourcesRef.current.clear();
+        
         setIsVoiceControlActive(false);
         setIsConnecting(false);
         setVoiceStatus('idle');
@@ -207,34 +165,50 @@ const App: React.FC = () => {
 
     useEffect(() => { return () => stopEverything(); }, [stopEverything]);
 
+    // --- НОВЫЙ УМНЫЙ КОНТЕКСТ (Без создания записей) ---
     const generateContext = (data: UserData) => {
         const today = new Date().toLocaleDateString('ru-RU');
+        
+        // Оптимизируем данные для быстрого анализа
         const optimizedDb = {
-            reports: data.reports.slice(0, 5).map(r => ({ name: r.name, metrics: r.metrics })),
-            proposals: data.proposals.slice(0, 20).map(p => ({ company: p.company, item: p.item, amount: p.amount, status: p.status, direction: p.direction })),
-            campaigns: data.campaigns.slice(0, 10).map(c => ({ name: c.name, status: c.status, spend: c.spend })),
-            storage: data.files.map(f => f.name), 
-            links: data.links,
-            payments: data.payments.slice(0, 10)
+            recent_reports: data.reports.slice(0, 6).map(r => ({ period: r.name, total_sales: r.metrics.sales, total_leads: r.metrics.leads })),
+            active_proposals: data.proposals.slice(0, 15).map(p => ({ client: p.company, item: p.item, sum: p.amount, status: p.status })),
+            recent_campaigns: data.campaigns.slice(0, 10),
+            payments: data.payments.slice(0, 10),
+            company_info: data.companyProfile.details
         };
 
         return `
         SYSTEM_INSTRUCTION:
         DATE: ${today}
-        IDENTITY: Lumi, Эксперт KZ TRANSIT.
-        VOICE RULES:
-        1. Язык: ТОЛЬКО РУССКИЙ.
-        2. Цифры: Читай словами! "5000" -> "пять тысяч".
-        3. Краткость: Не лей воду.
-        CONTEXT: ${JSON.stringify(optimizedDb)}
-        USER_INSTRUCTION: ${data.companyProfile.aiSystemInstruction}
+        
+        IDENTITY: 
+        Ты — Lumi (Люми), интеллектуальный голосовой бизнес-партнер компании KZ TRANSIT.
+        Твоя роль: Главный консультант, аналитик, помощник директора и команды.
+
+        CORE TASKS:
+        1. Поиск информации: Если данных нет в базе, используй Google Search (курсы валют, новости, законы, технологии).
+        2. Анализ данных: Давай точные ответы по продажам, маркетингу и финансам на основе предоставленного JSON.
+        3. Креатив: Помогай формулировать письма, посты, слоганы. Переводи тексты.
+        4. Техническая поддержка: Консультируй по 3D-печати и РТИ.
+
+        VOICE RULES (CRITICAL):
+        1. КРАТКОСТЬ: Говори емко. Максимум 2-3 предложения за раз (до 500 символов), если не попросили подробный доклад.
+        2. СТИЛЬ: Живой, интересный, профессиональный. Без канцеляризмов и "воды".
+        3. ПОВЕДЕНИЕ: 
+           - Если пользователь говорит "Стоп" или перебивает — замолкай немедленно.
+           - Если не знаешь ответа — скажи "Сейчас найду в интернете" и ищи.
+           - Цифры произноси словами (5000 -> пять тысяч).
+        
+        DATABASE: ${JSON.stringify(optimizedDb)}
+        USER_NOTES: ${data.companyProfile.aiSystemInstruction}
         `;
     };
 
     const connectToGemini = async () => {
         if (isConnecting) return;
         setIsConnecting(true);
-        stopEverything();
+        stopEverything(); 
 
         const apiKey = import.meta.env.VITE_GOOGLE_API_KEY;
         if (!apiKey) { alert("API Key not found"); setIsConnecting(false); return; }
@@ -253,9 +227,9 @@ const App: React.FC = () => {
             const ai = new GoogleGenAI({ apiKey: apiKey });
             const fullContext = generateContext(userData);
 
+            // ОСТАВЛЯЕМ ТОЛЬКО ПОИСК (Убираем создание и навигацию)
             const toolsArray: any[] = [
-                { googleSearch: {} },
-                { functionDeclarations: [navigationTool, createProposalTool, addMarketingIdeaTool, calculateMarginTool] }
+                { googleSearch: {} }
             ];
 
             const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
@@ -280,7 +254,11 @@ const App: React.FC = () => {
                 model: 'models/gemini-2.0-flash-exp',
                 config: {
                     responseModalities: [Modality.AUDIO],
-                    speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName: 'Aoede' } } },
+                    speechConfig: { 
+                        voiceConfig: { 
+                            prebuiltVoiceConfig: { voiceName: 'Aoede' } // Женский профессиональный голос
+                        } 
+                    },
                     systemInstruction: fullContext,
                     tools: toolsArray,
                 },
@@ -304,40 +282,7 @@ const App: React.FC = () => {
                             setLiveUserTranscript(userTranscriptRef.current);
                         }
                         
-                        if (message.toolCall) {
-                            const functionResponses: any[] = [];
-                            for (const fc of message.toolCall.functionCalls) {
-                                let result: any = { result: "Ok" };
-                                try {
-                                    if (fc.name === 'navigateToPage') {
-                                       handleNavigation(fc.args.page as string);
-                                    } 
-                                    else if (fc.name === 'createCommercialProposal') {
-                                        const { company, item, amount, direction } = fc.args as any;
-                                        let normDir: 'РТИ' | '3D' = (direction && direction.includes('3D')) ? '3D' : 'РТИ';
-                                        crudFunctions.addProposal({
-                                           date: new Date().toISOString().split('T')[0],
-                                           direction: normDir,
-                                           proposalNumber: `КП-${Math.floor(10000 + Math.random() * 90000)}`,
-                                           company, item, amount, status: 'Ожидание', invoiceNumber: null, invoiceDate: null, paymentDate: null, paymentType: null,
-                                        });
-                                    }
-                                    else if (fc.name === 'addMarketingIdea') {
-                                        const { name, budget } = fc.args as any;
-                                        crudFunctions.addCampaign({ name, status: 'Черновик', spend: budget || 0, clicks: 0, leads: 0, sales: 0 });
-                                    }
-                                    else if (fc.name === 'calculateMargin') {
-                                        const { costPrice, salePrice } = fc.args as any;
-                                        result = { result: `Margin: ${(((salePrice-costPrice)/salePrice)*100).toFixed(1)}%` };
-                                    }
-                                } catch(e) { result = { error: "Failed" }; }
-                                functionResponses.push({ id: fc.id, name: fc.name, response: result });
-                            }
-                            if (functionResponses.length > 0 && isSessionActive) {
-                                sessionRef.current?.sendToolResponse({ functionResponses }).catch(() => {});
-                            }
-                        }
-                        
+                        // Обработка завершения фразы
                         if (message.serverContent?.turnComplete) {
                             userTranscriptRef.current = '';
                             aiTranscriptRef.current = '';
@@ -347,9 +292,10 @@ const App: React.FC = () => {
                                     setLiveAiTranscript(''); 
                                     setVoiceStatus('listening'); 
                                 }
-                            }, 2000);
+                            }, 1500);
                         }
                         
+                        // Воспроизведение аудио
                         const modelTurn = message.serverContent?.modelTurn;
                         if (modelTurn?.parts) {
                             for (const part of modelTurn.parts) {
@@ -370,8 +316,8 @@ const App: React.FC = () => {
                             }
                         }
                     },
-                    onclose: (e: any) => { if (isSessionActive) { isSessionActive = false; stopEverything(); } },
-                    onerror: (e: any) => { if (isSessionActive) { isSessionActive = false; stopEverything(); } }
+                    onclose: () => { if (isSessionActive) { isSessionActive = false; stopEverything(); } },
+                    onerror: () => { if (isSessionActive) { isSessionActive = false; stopEverything(); } }
                 }
             });
 
@@ -392,10 +338,10 @@ const App: React.FC = () => {
             processor.connect(inputContext.destination);
 
         } catch (err) {
-            console.error("Failed to connect:", err);
+            console.error("Connection failed:", err);
             isSessionActive = false;
             stopEverything();
-            alert("Сбой подключения (возможно перегрузка токенов).");
+            alert("Ошибка подключения к Lumi.");
         }
     };
 
